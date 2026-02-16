@@ -1,5 +1,5 @@
 // ============================================================================
-//  AutoLee v1.0
+//  AutoLee v1.1
 // ============================================================================
 
 #include <lvgl.h>
@@ -100,7 +100,7 @@ static constexpr uint32_t STOP_TIMEOUT_MS = 8000;
 static uint16_t           RUN_SG_TRIP        = 50;   // SG above this = stall (normal ~26-29, jam ~130+)
 static constexpr uint16_t RUN_SG_TRIP_MIN    = 0;
 static constexpr uint16_t RUN_SG_TRIP_MAX    = 200;
-static constexpr uint32_t RUN_SG_SUSTAIN_MS  = 100;  // SG must stay above trip for this long
+static constexpr uint32_t RUN_SG_SUSTAIN_MS  = 300;  // SG must stay above trip for this long
 static constexpr uint32_t RUN_SG_IGNORE_MS   = 400;  // ignore SG after each direction change
 static constexpr int32_t  RUN_BACKOFF_STEPS  = 1000; // steps to back off after jam
 static constexpr uint32_t CREEP_HOME_SPEED   = CAL_SPEED_HZ;
@@ -653,10 +653,12 @@ static bool calibrateEndpointsSensorless() {
   recomputeEffectiveEndpoints();
   driver.rms_current(RUN_CURRENT_MA);
 
-  return_home_up_safe();
-
+  // Position is trusted after calibration — just move directly to endpointUp
   stepper->setSpeedInHz(saved_speed);
   stepper->setAcceleration(RUN_ACCEL);
+  stepper->moveTo(endpointUp);
+  fas_wait_for_stop();
+
   runState = IDLE;
   return true;
 }
