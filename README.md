@@ -25,12 +25,12 @@ Software for Lee APP automation (AutoLee)
 |---|-----------|-------|------|
 | 7 | Power Brick | 24v, 5A | [Amazon.se](https://www.amazon.se/dp/B0CNPMCP6F) |
 | 8 | On/Off Switch | — | [Amazon.se](https://www.amazon.se/dp/B07GDCNXKP) |
-| 9 | Power Jack | — | [Amazon.se](https://www.amazon.se/dp/B081CM1G4M) |
+| 9 | Power Jack | 2.5mm DC Socket | [Amazon.se](https://www.amazon.se/dp/B081CM1G4M) |
 
 ## Cooling
 
 | # | Component | Specs | Link |
 |---|-----------|-------|------|
-| 10 | Fan 24v | — | [Amazon.se](https://www.amazon.se/dp/B00MNJD8BE) |
+| 10 | Fan | 24v, 40 x 40 x 20 mm | [Amazon.se](https://www.amazon.se/dp/B00MNJD8BE) |
 
 > **Note:** The buck converter dimensions and leadscrew have not been fully verified — double-check fitment before ordering.
