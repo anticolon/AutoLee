@@ -23,7 +23,7 @@ Software for Lee APP automation (AutoLee)
 
 | # | Component | Specs | Link |
 |---|-----------|-------|------|
-| 7 | Power Brick | PSU | [Amazon.se](https://www.amazon.se/dp/B0CNPMCP6F) |
+| 7 | Power Brick | 24v, 5A | [Amazon.se](https://www.amazon.se/dp/B0CNPMCP6F) |
 | 8 | On/Off Switch | — | [Amazon.se](https://www.amazon.se/dp/B07GDCNXKP) |
 | 9 | Power Jack | — | [Amazon.se](https://www.amazon.se/dp/B081CM1G4M) |
 
