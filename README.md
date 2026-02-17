@@ -17,7 +17,7 @@ Software for Lee APP automation (AutoLee)
 |---|-----------|-------|------|
 | 4 | NEMA23 | 2.4 Nm, 4.0 A, 57×57×82 mm, 8 mm shaft Stepper motor | [Amazon.se](https://www.amazon.se/-/en/dp/B091C37FJ2) |
 | 5 | Clutch (coupling) | Motor-to-leadscrew | [Amazon.se](https://www.amazon.se/dp/B07CLLW7Z3) |
-| 6 | Leadscrew kit | ⚠️ *Verify physical dimensions* | [Amazon.de](https://www.amazon.de/dp/B08WRJRM22) |
+| 6 | Leadscrew kit SFU1605 250mm | ⚠️ *Verify physical dimensions* | [Amazon.de](https://www.amazon.de/dp/B08WRJRM22) |
 
 ## Power
 
