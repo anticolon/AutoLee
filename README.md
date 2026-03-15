@@ -38,7 +38,7 @@ The stall detection and jam protection features are designed to detect brass get
 - **Fine-tune SG per profile** — type a value directly into text inputs on the web Configuration page, or use ±1/±5 buttons on the touch screen
 
 ### Motor Current
-- **Adjustable run current** — 1,000–4,500 mA via web slider (default 2,500 mA)
+- **Adjustable run current** — 1,000–4,500 mA via web slider (default 3,500 mA)
 - **Overcurrent warning** — values above 4,000 mA show a warning (exceeds motor rating, ensure cooling)
 - **Live adjustment** — takes effect immediately, no restart needed
 
@@ -157,24 +157,34 @@ The stall detection and jam protection features are designed to detect brass get
 
 ### Dependencies (Arduino / PlatformIO)
 
-| Library | Purpose |
-|---|---|
-| `LVGL` (v8.4.x) | Touchscreen UI framework |
-| `TMCStepper` | TMC5160 SPI communication |
-| `FastAccelStepper` | Step pulse generation with acceleration |
-| `Arduino_GFX_Library` | ST7789 display driver |
-| `ESPAsyncWebServer` + `AsyncTCP` | Web server & SSE |
-| `ArduinoOTA` | Over-the-air firmware updates |
-| `DNSServer` | Captive portal redirect |
+| Library | Version | Install | Purpose |
+|---|---|---|---|
+| `LVGL` | v8.4.0 | Online | Touchscreen UI framework |
+| `GFX_Library_for_Arduino` | v1.5.9 | Online | ST7789 display driver |
+| `TMCStepper` | — | Online | TMC5160 SPI communication |
+| `FastAccelStepper` | — | Online | Step pulse generation with acceleration |
+| `ESPAsyncWebServer` + `AsyncTCP` | — | Online | Web server & SSE |
+| `ArduinoOTA` | — | Online | Over-the-air firmware updates |
+| `DNSServer` | — | Online | Captive portal redirect |
+| `esp_lcd_touch_axs5106l` | — | **Offline** | AXS5106L touch controller driver |
+
+> **Note:** The `esp_lcd_touch_axs5106l` library is **not available** in the Arduino Library Manager. You must install it manually from Waveshare's demo package — see step 3 below.
 
 ### Build & Flash
 
 1. Clone this repo
-2. Copy `lv_conf.h` next to your `lvgl` library folder
-3. Open `AutoLee.ino` in Arduino IDE or PlatformIO
-4. Select board: **ESP32-C6**
-5. Set partition scheme: **Minimal SPIFFS (1.9 MB APP with OTA/190 KB SPIFFS)** — the firmware is too large for the default partition layout
-6. Flash
+2. Install all "Online" libraries above via the Arduino Library Manager
+3. Install the touch driver **offline**:
+   - Download the [Waveshare ESP32-C6-Touch-LCD-1.47 demo package](https://www.waveshare.com/wiki/ESP32-C6-Touch-LCD-1.47)
+   - Find the `esp_lcd_touch_axs5106l` library folder inside the package
+   - Copy it to your Arduino `libraries` directory
+4. Set up LVGL:
+   - Copy `lv_conf.h` from this repo to sit **next to** your `lvgl` library folder (not inside it)
+   - Copy the `demos` folder from inside the LVGL library into its `src` folder
+5. Open `AutoLee.ino` in Arduino IDE or PlatformIO
+6. Select board: **ESP32-C6**
+7. Set partition scheme: **Minimal SPIFFS (1.9 MB APP with OTA/190 KB SPIFFS)** — the firmware is too large for the default partition layout
+8. Compile and flash
 
 ### OTA Updates
 
@@ -194,7 +204,7 @@ Key constants at the top of `AutoLee.ino`:
 | `profiles[0]` (Slow) | 15,000 Hz / SG 350 | Low speed, high SG threshold — max torque for tough primers |
 | `profiles[1]` (Normal) | 35,000 Hz / SG 15 | Balanced speed and sensitivity |
 | `profiles[2]` (Fast) | 45,000 Hz / SG 1 | High speed, very sensitive stall detection |
-| `RUN_CURRENT_MA` | 2,500 mA | Motor run current (adjustable 1,000–4,500 via web UI) |
+| `RUN_CURRENT_MA` | 3,500 mA | Motor run current (adjustable 1,000–4,500 via web UI) |
 | `RUN_DECEL` | 800,000 | Accel/decel rate (steps/s²) |
 | `CAL_CURRENT_MA` | 3,200 | Calibration current (mA, fixed) |
 | `CAL_SPEED_HZ` | 8,000 | Calibration speed (Hz) |
