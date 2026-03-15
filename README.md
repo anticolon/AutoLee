@@ -61,14 +61,14 @@ The stall detection and jam protection features are designed to detect brass get
 
 ### Touch UI (172×320 LVGL)
 - **Main screen** — counter (centered), active speed profile indicator, calibration warning, batch remaining, buttons for Batch Run and Settings
-- **Settings screen** — Calibrate, Configuration, Reset Counter, WiFi Info
-- **Configuration screen** — Speed Profile, Endpoints, Stall Guard
+- **Settings screen** — Calibrate, Configuration, Reset Counter
+- **Configuration screen** — Speed Profile, Endpoints, Stall Guard, WiFi Info
 - **Speed Profile screen** — three buttons with green highlight on active, info card showing Hz + SG
 - **Endpoints (tuning) screen** — raw and effective endpoint values, buttons to edit UP and DOWN
 - **Stall Guard screen** — adjust SG trip for the active profile with ±1/±5 buttons
 - **Batch Run screen** — set target count with ±1/10/100 buttons, start batch
 - **Jam screen** — warning display with one-button return home
-- **WiFi screen** — shows connected SSID and IP address, or AP info
+- **WiFi screen** — shows connected SSID and IP address (centered), Reset WiFi button to clear credentials and reboot
 
 ### Web Interface (5-page layout)
 - **Full control from any browser** — responsive dark-theme UI works on phone and desktop
@@ -242,6 +242,7 @@ SSE stream available at `/events` — pushes JSON state every 250 ms and log lin
 
 | Version | Changes |
 |---|---|
+| **v1.7** | WiFi Info moved to Configuration sub-menu; Reset WiFi button on WiFi info screen; speed profile buttons resized to fit display; WiFi info centered in card |
 | **v1.6** | Adjustable motor current (1,000–4,500 mA) via web; multi-page web UI (Main, Configuration, Log, Firmware, WiFi); touch UI restructured (Settings → Configuration sub-menu); WiFi page shows SSID + IP; SG text inputs with auto-submit on blur; profiles retuned (Slow 15kHz/350, Normal 35kHz/15, Fast 45kHz/1); all labels fitted to 172px display |
 | **v1.5** | Speed profiles (Slow/Normal/Fast) replace speed slider; per-profile SG thresholds; profile API |
 | **v1.4** | Captive portal WiFi; work zone SG blanking; RUN_DECEL 800k; median-of-5 SPI filter; sliding counter stall detection; 500-line log; redesigned web UI |
