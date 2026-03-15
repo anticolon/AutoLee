@@ -1,6 +1,8 @@
 // ============================================================================
-//  AutoLee v1.2
+//  AutoLee v1.5
 // ============================================================================
+
+#define FW_VERSION "1.5"
 
 #include <lvgl.h>
 #include "esp_lcd_touch_axs5106l.h"
@@ -15,6 +17,7 @@
 #include <ArduinoOTA.h>
 #include <Preferences.h>
 #include <Update.h>
+#include <DNSServer.h>
 
 // ==========================================================================
 //  CONFIGURATION
@@ -37,10 +40,27 @@ static const char *DEFAULT_AP_PASS = "autolee123";
 #define Touch_RST     20
 #define Touch_INT     21
 
-static constexpr uint32_t UI_SPEED_MIN = 10000;
-static constexpr uint32_t UI_SPEED_MAX = 55000;
-static uint32_t           ui_speed_hz  = 30000;
-static constexpr uint32_t RUN_ACCEL    = 80000;
+// --- Speed profiles: each bundles speed + matching SG threshold ---
+struct SpeedProfile {
+  const char *name;
+  uint32_t speed_hz;
+  uint16_t sg_trip_default;  // factory default SG for this speed
+  uint16_t sg_trip;          // current (user-tweakable) SG trip
+};
+
+static constexpr uint8_t NUM_PROFILES = 3;
+static SpeedProfile profiles[NUM_PROFILES] = {
+  { "Slow",   30000, 80, 80 },   // TODO: tune SG defaults per speed
+  { "Normal", 40000, 80, 80 },
+  { "Fast",   50000, 80, 80 },
+};
+static uint8_t activeProfile = 1;  // default to Normal
+
+static constexpr uint32_t RUN_DECEL    = 800000;  // accel/decel rate for run moves (fast ramps, max SG coverage)
+
+// Accessors — use these everywhere instead of raw globals
+#define ui_speed_hz  (profiles[activeProfile].speed_hz)
+#define RUN_SG_TRIP  (profiles[activeProfile].sg_trip)
 
 static int32_t upOffsetSteps   = 0;
 static int32_t downOffsetSteps = 0;
@@ -53,7 +73,7 @@ static constexpr int32_t CAL_PREMOVE_DOWN_STEPS = 5500;
 
 // Calibration
 static constexpr int8_t   CAL_SGT          = -1;
-static constexpr uint16_t RUN_CURRENT_MA   = 4000;
+static constexpr uint16_t RUN_CURRENT_MA   = 2500;
 static constexpr uint16_t CAL_CURRENT_MA   = 3200;
 static constexpr uint32_t CAL_SPEED_HZ     = 8000;
 static constexpr uint32_t CAL_ACCEL        = 25000;
@@ -98,12 +118,18 @@ static uint32_t stopEntryMs   = 0;
 static constexpr uint32_t STOP_TIMEOUT_MS = 8000;
 
 // --- Runtime stall detection (during RUNNING) ---
-static uint16_t           RUN_SG_TRIP        = 80;   // SG above this = stall (normal ~26-29, jam ~130+)
+// SG trip is now per-profile — use active_sg() to read/write
 static constexpr uint16_t RUN_SG_TRIP_MIN    = 0;
-static constexpr uint16_t RUN_SG_TRIP_MAX    = 200;
-static constexpr uint32_t RUN_SG_SUSTAIN_MS  = 300;  // SG must stay above trip for this long
-static constexpr uint32_t RUN_SG_IGNORE_MS   = 400;  // ignore SG after each direction change
+static constexpr uint16_t RUN_SG_TRIP_MAX    = 500;
 static constexpr int32_t  RUN_BACKOFF_STEPS  = 1000; // steps to back off after jam
+
+// Work zone: skip SG monitoring near the DOWN endpoint where the tool
+// does useful work (e.g. pushing primers). The resistance here is normal
+// and would false-trigger stall detection at low trip thresholds.
+// SG is still active for the rest of the travel and near the UP endpoint.
+static int32_t SG_WORK_ZONE_STEPS = 5500;  // skip SG this many steps before endpointDown
+static constexpr int32_t SG_WORK_ZONE_MIN = 0;
+static constexpr int32_t SG_WORK_ZONE_MAX = 20000;
 static constexpr uint32_t CREEP_HOME_SPEED   = CAL_SPEED_HZ;
 static constexpr uint32_t CREEP_HOME_ACCEL   = CAL_ACCEL;
 static constexpr uint16_t CREEP_SG_TRIP      = 15;
@@ -111,9 +137,10 @@ static constexpr uint8_t  CREEP_SG_CONFIRM   = 3;
 static constexpr uint32_t CREEP_IGNORE_MS    = 300;
 static constexpr uint32_t CREEP_TIMEOUT_MS   = 20000;
 
-static uint32_t runSGStallStartMs = 0;     // 0 = not currently above trip
-static bool     runSGAboveTrip = false;
 static uint32_t lastDirectionChangeMs = 0;
+static uint8_t  runSGHighCount = 0;        // sliding counter of above-trip readings
+static uint8_t  runSGLowCount = 0;         // consecutive below-threshold readings (for slow decrement)
+static constexpr uint8_t RUN_SG_HIGH_NEEDED = 2;  // need this many high readings to trigger jam (no sustain timer)
 
 // Jam screen
 static lv_obj_t *jam_scr = nullptr;
@@ -124,6 +151,9 @@ static lv_obj_t *lbl_sg_val = nullptr;
 static bool wifiConnected = false;
 static bool wifiAPMode = false;
 static String wifiSSID = "", wifiPass = "";
+static String scannedOptionsHTML = "";
+DNSServer dnsServer;
+static bool captivePortalRunning = false;
 
 Preferences prefs;
 AsyncWebServer webServer(80);
@@ -138,11 +168,13 @@ static lv_disp_draw_buf_t draw_buf;
 static lv_color_t *disp_draw_buf = nullptr;
 static lv_disp_drv_t disp_drv;
 
-static lv_obj_t *main_scr = nullptr, *settings_scr = nullptr, *speed_scr = nullptr;
+static lv_obj_t *main_scr = nullptr, *settings_scr = nullptr, *profile_scr = nullptr;
 static lv_obj_t *tuning_scr = nullptr, *ep_up_scr = nullptr, *ep_dn_scr = nullptr;
 static lv_obj_t *wifi_scr = nullptr;
 static lv_obj_t *counter_label = nullptr, *main_warn = nullptr, *main_warn_lbl = nullptr;
-static lv_obj_t *slider_speed = nullptr, *lbl_speed_val = nullptr;
+static lv_obj_t *lbl_speed_val = nullptr;
+static lv_obj_t *profile_btns[NUM_PROFILES] = {}; // buttons on profile screen
+static lv_obj_t *lbl_profile_info = nullptr;       // shows Hz + SG on profile screen
 static lv_obj_t *lbl_ep_up = nullptr, *lbl_ep_dn = nullptr, *lbl_travel = nullptr;
 static lv_obj_t *lbl_up_eff = nullptr, *lbl_dn_eff = nullptr;
 static lv_obj_t *lbl_ep_up_val = nullptr, *lbl_ep_dn_val = nullptr;
@@ -167,12 +199,12 @@ static uint32_t lastSSEMs = 0;
 static constexpr uint32_t SSE_INTERVAL_MS = 250;
 
 // --- Log ring buffer for web ---
-static constexpr uint8_t  LOG_LINES = 40;
-static constexpr uint16_t LOG_LINE_LEN = 120;
+static constexpr uint16_t LOG_LINES = 500;
+static constexpr uint16_t LOG_LINE_LEN = 140;
 static char logBuf[LOG_LINES][LOG_LINE_LEN];
-static uint8_t logHead = 0;   // next write index
-static uint8_t logCount = 0;
-static bool logDirty = false;
+static uint16_t logHead = 0;       // next write index in ring buffer (wraps at LOG_LINES)
+static uint32_t logSerial = 0;     // monotonic total lines written (never wraps in practice)
+static uint32_t logSentSerial = 0; // serial number of last line sent to client
 
 static void webLog(const char *fmt, ...) {
   char line[LOG_LINE_LEN];
@@ -180,14 +212,11 @@ static void webLog(const char *fmt, ...) {
   va_start(args, fmt);
   vsnprintf(line, sizeof(line), fmt, args);
   va_end(args);
-  // Write to Serial
   Serial.println(line);
-  // Write to ring buffer
   strncpy(logBuf[logHead], line, LOG_LINE_LEN - 1);
   logBuf[logHead][LOG_LINE_LEN - 1] = '\0';
   logHead = (logHead + 1) % LOG_LINES;
-  if (logCount < LOG_LINES) logCount++;
-  logDirty = true;
+  logSerial++;
 }
 
 // ==========================================================================
@@ -201,23 +230,23 @@ static inline long flipTarget(long t) { return (t == endpointUp) ? endpointDown 
 static inline uint16_t read_sg_raw() {
   // Ensure display CS is not active (shared SPI bus)
   digitalWrite(14, HIGH);
-  // Disable step pulse interrupts during SPI to prevent corruption
-  noInterrupts();
+  delayMicroseconds(10);  // let bus settle after display CS release
   uint32_t drv = driver.DRV_STATUS();
-  interrupts();
   return (uint16_t)(drv & 0x03FF);
 }
 
-// Median-of-3 filter to reject SPI glitch spikes
+// Median-of-5 filter to reject SPI glitch spikes (more robust than median-of-3)
 static uint16_t read_sg() {
-  uint16_t a = read_sg_raw();
-  uint16_t b = read_sg_raw();
-  uint16_t c = read_sg_raw();
-  // Return median
-  if (a > b) { uint16_t t = a; a = b; b = t; }
-  if (b > c) { b = c; }
-  if (a > b) { b = a; }
-  return b;
+  uint16_t s[5];
+  for (int i = 0; i < 5; i++) s[i] = read_sg_raw();
+  // Simple insertion sort for 5 elements
+  for (int i = 1; i < 5; i++) {
+    uint16_t key = s[i];
+    int j = i - 1;
+    while (j >= 0 && s[j] > key) { s[j + 1] = s[j]; j--; }
+    s[j + 1] = key;
+  }
+  return s[2];  // median
 }
 static inline void fas_wait_for_stop() {
   while (stepper && stepper->isRunning()) { lv_timer_handler(); delay(1); }
@@ -243,19 +272,21 @@ static void recomputeEffectiveEndpoints() {
 // ==========================================================================
 //  MOTION
 // ==========================================================================
+// Decel distance at RUN_DECEL: v²/(2*a). At 40000Hz/800000 = 1000 steps, ~50ms.
+// Both accel and decel use this rate — fast ramps, maximum cruise time for SG monitoring.
+
 static void startRunBetweenEndpoints() {
   if (!endpointsCalibrated || !stepper) return;
   runState = RUNNING;
-  runSGAboveTrip = false;
-  runSGStallStartMs = 0;
+  runSGHighCount = 0; runSGLowCount = 0;
   lastDirectionChangeMs = millis();
 
-  // Ensure TMC5160 is in spreadCycle with SG2 active for runtime stall detection
   driver.rms_current(RUN_CURRENT_MA);
-  driver.en_pwm_mode(false);    // spreadCycle (required for SG2)
+  driver.en_pwm_mode(false);
   driver.TPWMTHRS(0);
-  driver.TCOOLTHRS(0xFFFFF);    // SG2 active at all speeds
-  driver.semin(0); driver.semax(0);  // CoolStep off
+  driver.TCOOLTHRS(0xFFFFF);
+  driver.semin(0); driver.semax(0);
+  driver.sgt(constrain((int8_t)CAL_SGT, (int8_t)-64, (int8_t)63));
 
   long pos = stepper->getCurrentPosition();
   if (nearPos(pos, endpointUp))        currentTarget = endpointDown;
@@ -263,8 +294,9 @@ static void startRunBetweenEndpoints() {
   else {
     currentTarget = (labs(pos - endpointUp) < labs(pos - endpointDown)) ? endpointUp : endpointDown;
   }
+
   stepper->setSpeedInHz(ui_speed_hz);
-  stepper->setAcceleration(RUN_ACCEL);
+  stepper->setAcceleration(RUN_DECEL);
   stepper->moveTo(currentTarget);
 }
 
@@ -273,6 +305,7 @@ static void requestGracefulStop() {
   runState = STOPPING;
   stopEntryMs = millis();
   currentTarget = endpointUp;
+  stepper->setAcceleration(RUN_DECEL);  // use fast decel for stop too
   stepper->moveTo(endpointUp);
 }
 
@@ -285,8 +318,9 @@ static void handleMotion() {
   if (!stepper || runState == CALIBRATING || runState == STALLED || runState == HOMING) return;
   switch (runState) {
     case RUNNING: {
+      long pos = stepper->getCurrentPosition();
+
       if (!stepper->isRunning()) {
-        // Completed a move — count if arrived at DOWN, then flip
         if (currentTarget == endpointDown && counter < 9999) {
           counter++;
           if (batchActive) {
@@ -302,60 +336,90 @@ static void handleMotion() {
         }
         currentTarget = flipTarget(currentTarget);
         lastDirectionChangeMs = millis();
-        runSGAboveTrip = false;
-        runSGStallStartMs = 0;
+        runSGHighCount = 0; runSGLowCount = 0;
+        stepper->setSpeedInHz(ui_speed_hz);
+        stepper->setAcceleration(RUN_DECEL);
         stepper->moveTo(currentTarget);
         break;
       }
 
       // --- Runtime stall detection ---
-      // Disabled when RUN_SG_TRIP == 0
       if (RUN_SG_TRIP == 0) break;
 
-      // Skip SG reading during acceleration after direction change
       uint32_t sinceChange = millis() - lastDirectionChangeMs;
-      if (sinceChange < RUN_SG_IGNORE_MS) break;
+
+      // Accel blank: v/a at RUN_DECEL + margin
+      uint32_t accelWindowMs = (uint32_t)((uint64_t)ui_speed_hz * 1000ULL / (uint64_t)RUN_DECEL) + 80;
+      if (sinceChange < accelWindowMs) break;
+
+      // Work zone: skip SG near the DOWN endpoint where the tool does work
+      // (primer push etc.) — normal resistance here would false-trigger.
+      // Only applies when heading toward DOWN, not toward UP.
+      if (currentTarget == endpointDown) {
+        int32_t distToDown = labs(pos - endpointDown);
+        if (distToDown < SG_WORK_ZONE_STEPS) {
+          runSGHighCount = 0; runSGLowCount = 0;
+          break;
+        }
+      }
+
+      // Decel blank: position-based, using actual decel distance + margin.
+      // Skip UNLESS we already have jam evidence (carry-through).
+      {
+        int32_t distToTarget = labs(pos - currentTarget);
+        int32_t decelDist = (int32_t)((uint64_t)ui_speed_hz * ui_speed_hz / (2ULL * (uint64_t)RUN_DECEL));
+        int32_t decelBlank = decelDist + 500;  // margin for planner timing
+        if (distToTarget < decelBlank && runSGHighCount < RUN_SG_HIGH_NEEDED) {
+          runSGHighCount = 0; runSGLowCount = 0;
+          break;
+        }
+      }
 
       uint16_t sg = read_sg();
+      if (sg <= 1) break;
 
-      // Debug: print SG every 500ms so user can see normal values
+      // Debug: print SG every 500ms
       static uint32_t lastSGPrintMs = 0;
       if ((millis() - lastSGPrintMs) > 500) {
-        webLog("RUN SG=%u trip=%u pos=%ld", sg, RUN_SG_TRIP, stepper->getCurrentPosition());
+        int32_t distToTarget = labs(pos - currentTarget);
+        webLog("RUN SG=%u trip=%u pos=%ld dist=%ld t=%lu hi=%u/%u",
+               sg, RUN_SG_TRIP, pos, distToTarget, sinceChange,
+               runSGHighCount, RUN_SG_HIGH_NEEDED);
         lastSGPrintMs = millis();
       }
 
-      // Jam = SG stays ABOVE threshold for sustained period
-      // Normal running ~26-29, jam ~130-150
-      // Brief spikes from resonance/tight spots are ignored
       if (sg > RUN_SG_TRIP) {
-        if (!runSGAboveTrip) {
-          runSGAboveTrip = true;
-          runSGStallStartMs = millis();
-        } else if ((millis() - runSGStallStartMs) >= RUN_SG_SUSTAIN_MS) {
-          // JAM DETECTED — sustained high SG
-          webLog("JAM! SG=%u trip=%u pos=%ld tgt=%ld sustained=%lums",
-                        sg, RUN_SG_TRIP, stepper->getCurrentPosition(), currentTarget,
-                        millis() - runSGStallStartMs);
+        if (runSGHighCount < RUN_SG_HIGH_NEEDED + 4) runSGHighCount++;
+        runSGLowCount = 0;
+
+        webLog("SG HIGH=%u trip=%u cnt=%u pos=%ld t=%lu",
+               sg, RUN_SG_TRIP, runSGHighCount, pos, sinceChange);
+
+        if (runSGHighCount >= RUN_SG_HIGH_NEEDED) {
+          // JAM — trigger immediately, no sustain timer
+          webLog("JAM! SG=%u trip=%u pos=%ld tgt=%ld cnt=%u",
+                        sg, RUN_SG_TRIP, pos, currentTarget, runSGHighCount);
 
           stepper->forceStop();
           fas_wait_for_stop();
 
-          // Back off to release pressure
           stepper->setSpeedInHz(CREEP_HOME_SPEED);
           stepper->setAcceleration(CREEP_HOME_ACCEL);
 
-          // Back off in the opposite direction of travel
           int32_t backoff = (currentTarget == endpointDown) ? -RUN_BACKOFF_STEPS : +RUN_BACKOFF_STEPS;
           stepper->move(backoff);
           fas_wait_for_stop();
 
           runState = STALLED;
-          runSGAboveTrip = false;
+          runSGHighCount = 0; runSGLowCount = 0;
           showJamScreen();
         }
       } else {
-        runSGAboveTrip = false;
+        runSGLowCount++;
+        if (runSGLowCount >= 3) {
+          runSGLowCount = 0;
+          if (runSGHighCount > 0) runSGHighCount--;
+        }
       }
       break;
     }
@@ -423,7 +487,7 @@ static void safeCreepHome() {
   // Restore run current and speed
   driver.rms_current(RUN_CURRENT_MA);
   stepper->setSpeedInHz(ui_speed_hz);
-  stepper->setAcceleration(RUN_ACCEL);
+  stepper->setAcceleration(RUN_DECEL);
 
   runState = IDLE;
 
@@ -625,7 +689,7 @@ static bool calibrateEndpointsSensorless() {
   if (!move_until_stall(-1, hit_up)) {
     driver.rms_current(RUN_CURRENT_MA);
     stepper->setSpeedInHz(saved_speed);
-    stepper->setAcceleration(RUN_ACCEL);
+    stepper->setAcceleration(RUN_DECEL);
     runState = IDLE;
     return false;
   }
@@ -639,7 +703,7 @@ static bool calibrateEndpointsSensorless() {
   if (!move_until_stall(+1, hit_down)) {
     driver.rms_current(RUN_CURRENT_MA);
     stepper->setSpeedInHz(saved_speed);
-    stepper->setAcceleration(RUN_ACCEL);
+    stepper->setAcceleration(RUN_DECEL);
     runState = IDLE;
     return false;
   }
@@ -656,7 +720,7 @@ static bool calibrateEndpointsSensorless() {
 
   // Position is trusted after calibration — just move directly to endpointUp
   stepper->setSpeedInHz(saved_speed);
-  stepper->setAcceleration(RUN_ACCEL);
+  stepper->setAcceleration(RUN_DECEL);
   stepper->moveTo(endpointUp);
   fas_wait_for_stop();
 
@@ -865,7 +929,26 @@ static void ui_create_main_warning(lv_obj_t *parent) {
 }
 
 static void ui_update_speed_val() {
-  if (lbl_speed_val) lv_label_set_text_fmt(lbl_speed_val, "%lu", (unsigned long)ui_speed_hz);
+  if (lbl_speed_val) lv_label_set_text_fmt(lbl_speed_val, "%s  %lukHz",
+      profiles[activeProfile].name, (unsigned long)(ui_speed_hz / 1000));
+}
+
+static void ui_update_profile_screen();  // forward decl
+
+static void setActiveProfile(uint8_t idx) {
+  if (idx >= NUM_PROFILES) return;
+  activeProfile = idx;
+  if (stepper) {
+    stepper->setSpeedInHz(ui_speed_hz);
+    if (runState == RUNNING) {
+      // Speed change takes effect immediately
+    }
+  }
+  ui_update_speed_val();
+  ui_update_sg_val();
+  ui_update_profile_screen();
+  webLog("Profile: %s spd=%lu sg=%u", profiles[idx].name,
+         (unsigned long)ui_speed_hz, RUN_SG_TRIP);
 }
 
 static void ui_update_tuning_numbers() {
@@ -891,6 +974,24 @@ static void ui_update_endpoint_edit_values() {
 
 static void ui_update_sg_val() {
   if (lbl_sg_val) lv_label_set_text_fmt(lbl_sg_val, "%u", RUN_SG_TRIP);
+}
+
+static void ui_update_profile_screen() {
+  for (uint8_t i = 0; i < NUM_PROFILES; i++) {
+    if (!profile_btns[i]) continue;
+    if (i == activeProfile) {
+      lv_obj_set_style_bg_color(profile_btns[i], lv_color_hex(0x1F6FEB), LV_PART_MAIN);
+      lv_obj_set_style_border_width(profile_btns[i], 2, LV_PART_MAIN);
+      lv_obj_set_style_border_color(profile_btns[i], lv_color_hex(0x00FF00), LV_PART_MAIN);
+    } else {
+      lv_obj_set_style_bg_color(profile_btns[i], lv_color_hex(0x3A3A3A), LV_PART_MAIN);
+      lv_obj_set_style_border_width(profile_btns[i], 0, LV_PART_MAIN);
+    }
+  }
+  if (lbl_profile_info) {
+    lv_label_set_text_fmt(lbl_profile_info, "%luHz  SG=%u",
+        (unsigned long)ui_speed_hz, RUN_SG_TRIP);
+  }
 }
 
 static void ui_update_batch_val() {
@@ -919,7 +1020,7 @@ static void ui_update_wifi_label() {
   if (wifiConnected)
     lv_label_set_text_fmt(lbl_wifi_status, "IP: %s", WiFi.localIP().toString().c_str());
   else if (wifiAPMode)
-    lv_label_set_text_fmt(lbl_wifi_status, "AP: %s\n192.168.4.1", DEFAULT_AP_SSID);
+    lv_label_set_text_fmt(lbl_wifi_status, "AP: %s\n192.168.4.1\n(open, no password)", DEFAULT_AP_SSID);
   else
     lv_label_set_text(lbl_wifi_status, "Disconnected");
 }
@@ -1012,10 +1113,11 @@ static void build_endpoint_screen(lv_obj_t *scr, const char *titleTxt, bool isUp
 }
 
 static void on_go_main(lv_event_t *e) { LV_UNUSED(e); go(main_scr); }
-static void on_go_speed(lv_event_t *e) {
+static void on_go_profile(lv_event_t *e) {
   LV_UNUSED(e);
-  if (slider_speed) lv_slider_set_value(slider_speed, ui_speed_hz, LV_ANIM_OFF);
-  ui_update_speed_val(); go(speed_scr);
+  ui_update_speed_val();
+  ui_update_profile_screen();
+  go(profile_scr);
 }
 static void on_go_tuning(lv_event_t *e) {
   LV_UNUSED(e); recomputeEffectiveEndpoints(); ui_update_tuning_numbers(); go(tuning_scr);
@@ -1026,15 +1128,7 @@ static void on_go_ep_up(lv_event_t *e) {
 static void on_go_ep_dn(lv_event_t *e) {
   LV_UNUSED(e); recomputeEffectiveEndpoints(); ui_update_endpoint_edit_values(); go(ep_dn_scr);
 }
-static void on_reset_counter(lv_event_t *e) {
-  LV_UNUSED(e); counter = 0;
-  if (counter_label) lv_label_set_text(counter_label, "0");
-}
-static void on_speed_slider(lv_event_t *e) {
-  ui_speed_hz = lv_slider_get_value(lv_event_get_target(e));
-  if (stepper && runState == RUNNING) stepper->setSpeedInHz(ui_speed_hz);
-  ui_update_speed_val();
-}
+// on_speed_slider removed — replaced by profile selection
 static void on_calibrate(lv_event_t *e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   lv_obj_t *btn = lv_event_get_target(e);
@@ -1077,29 +1171,68 @@ static void saveWiFiCredentials(const String &ssid, const String &pass) {
   wifiSSID = ssid; wifiPass = pass;
 }
 
+static void clearWiFiCredentials() {
+  prefs.begin("autolee", false);
+  prefs.remove("ssid"); prefs.remove("pass");
+  prefs.end();
+  wifiSSID = ""; wifiPass = "";
+}
+
+static void scanNetworks() {
+  scannedOptionsHTML = "<option value=''>-- Select WiFi --</option>";
+  int n = WiFi.scanNetworks(false, true);
+  if (n <= 0) {
+    scannedOptionsHTML += "<option value=''>No networks found</option>";
+    return;
+  }
+  for (int i = 0; i < n; i++) {
+    String ssid = WiFi.SSID(i);
+    int rssi = WiFi.RSSI(i);
+    String sec = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "OPEN" : "SEC";
+    ssid.replace("\"", "&quot;"); ssid.replace("'", "&#39;");
+    ssid.replace("<", "&lt;");    ssid.replace(">", "&gt;");
+    scannedOptionsHTML += "<option value=\"" + ssid + "\">" + ssid +
+      " (" + rssi + " dBm " + sec + ")</option>";
+  }
+  WiFi.scanDelete();
+}
+
+static bool connectToWiFi(const char *ssid, const char *pass, uint32_t timeoutMs) {
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(true, true);
+  delay(200);
+  WiFi.begin(ssid, pass);
+  uint32_t start = millis();
+  while (WiFi.status() != WL_CONNECTED && (millis() - start) < timeoutMs) {
+    lv_timer_handler(); delay(10);
+  }
+  return (WiFi.status() == WL_CONNECTED);
+}
+
 static void startWiFi() {
   loadWiFiCredentials();
   if (wifiSSID.length() > 0) {
     Serial.printf("WiFi: connecting to '%s'...\n", wifiSSID.c_str());
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
-    uint32_t t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && (millis() - t0) < 10000) {
-      delay(100); lv_timer_handler();
-    }
-    if (WiFi.status() == WL_CONNECTED) {
+    if (connectToWiFi(wifiSSID.c_str(), wifiPass.c_str(), 10000)) {
       wifiConnected = true; wifiAPMode = false;
       Serial.printf("WiFi: connected! IP=%s\n", WiFi.localIP().toString().c_str());
     } else {
-      Serial.println("WiFi: STA failed, falling back to AP");
-      WiFi.disconnect();
+      Serial.println("WiFi: STA failed, starting captive portal");
     }
   }
   if (!wifiConnected) {
+    // Start OPEN captive portal AP (no password — easier to connect)
     WiFi.mode(WIFI_AP);
-    WiFi.softAP(DEFAULT_AP_SSID, DEFAULT_AP_PASS);
+    WiFi.softAP(DEFAULT_AP_SSID);  // open AP, no password
+    delay(300);
     wifiAPMode = true;
-    Serial.printf("WiFi AP: %s @ %s\n", DEFAULT_AP_SSID, WiFi.softAPIP().toString().c_str());
+    captivePortalRunning = true;
+    scanNetworks();
+
+    // Start DNS server for captive portal redirect
+    dnsServer.start(53, "*", WiFi.softAPIP());
+
+    Serial.printf("WiFi AP: %s @ %s (captive portal)\n", DEFAULT_AP_SSID, WiFi.softAPIP().toString().c_str());
   }
   ui_update_wifi_label();
 }
@@ -1108,18 +1241,29 @@ static void startWiFi() {
 //  WEB SERVER
 // ==========================================================================
 static String buildStateJSON() {
-  char buf[512];
+  char buf[768];
   snprintf(buf, sizeof(buf),
-    "{\"state\":\"%s\",\"counter\":%ld,\"speed\":%lu,\"calibrated\":%s,"
+    "{\"version\":\"%s\",\"state\":\"%s\",\"counter\":%ld,\"speed\":%lu,\"calibrated\":%s,"
     "\"rawUp\":%ld,\"rawDown\":%ld,\"endpointUp\":%ld,\"endpointDown\":%ld,"
     "\"upOffset\":%ld,\"downOffset\":%ld,\"position\":%ld,\"sgTrip\":%u,"
+    "\"workZone\":%ld,"
+    "\"profileIdx\":%u,\"profileName\":\"%s\","
+    "\"profiles\":[{\"name\":\"Slow\",\"hz\":%lu,\"sg\":%u},"
+    "{\"name\":\"Normal\",\"hz\":%lu,\"sg\":%u},"
+    "{\"name\":\"Fast\",\"hz\":%lu,\"sg\":%u}],"
     "\"batchTarget\":%ld,\"batchCount\":%ld,\"batchActive\":%s}",
+    FW_VERSION,
     runState==RUNNING?"RUNNING":runState==STOPPING?"STOPPING":runState==CALIBRATING?"CALIBRATING":runState==STALLED?"STALLED":runState==HOMING?"HOMING":"IDLE",
     counter, (unsigned long)ui_speed_hz, endpointsCalibrated?"true":"false",
     rawUp, rawDown, endpointUp, endpointDown,
     (long)upOffsetSteps, (long)downOffsetSteps,
     stepper ? stepper->getCurrentPosition() : 0L,
     RUN_SG_TRIP,
+    (long)SG_WORK_ZONE_STEPS,
+    activeProfile, profiles[activeProfile].name,
+    (unsigned long)profiles[0].speed_hz, profiles[0].sg_trip,
+    (unsigned long)profiles[1].speed_hz, profiles[1].sg_trip,
+    (unsigned long)profiles[2].speed_hz, profiles[2].sg_trip,
     batchTarget, batchCount,
     batchActive ? "true" : "false");
   return String(buf);
@@ -1128,62 +1272,84 @@ static String buildStateJSON() {
 static const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AutoLee Control</title>
+<title>AutoLee</title>
 <style>
-:root{--bg:#0a0a0a;--card:#1a1a1a;--accent:#1F6FEB;--green:#00FF00;--red:#FF4444;--text:#e0e0e0;--muted:#888}
+:root{--bg:#111;--box:#1b1b1b;--card:#222;--accent:#1F6FEB;--green:#00FF00;--red:#FF4444;--text:#eee;--muted:#888;--dim:#555;--border:#333}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:16px}
-h1{font-size:1.6em;margin-bottom:4px}.sub{color:var(--muted);font-size:.85em;margin-bottom:16px}
-.card{background:var(--card);border-radius:12px;padding:16px;margin-bottom:12px;width:100%;max-width:400px}
-.card h2{font-size:1.1em;margin-bottom:10px;color:var(--muted)}
-.badge{display:inline-block;padding:4px 12px;border-radius:12px;font-size:.8em;font-weight:600}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;justify-content:center;padding:16px 12px}
+.wrap{width:100%;max-width:420px}
+h1{font-size:1.5em;text-align:center;margin-bottom:2px}
+.sub{color:var(--dim);font-size:.8em;text-align:center;margin-bottom:16px}
+.sec{background:var(--box);border-radius:12px;padding:16px;margin-bottom:10px}
+.sec h2{font-size:.85em;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
+.badge{display:inline-block;padding:3px 10px;border-radius:10px;font-size:.75em;font-weight:600}
 .badge.ok{background:#0d3320;color:var(--green)}.badge.warn{background:#3A2B12;color:#FFD37C}.badge.run{background:#331111;color:var(--red)}.badge.stall{background:#441111;color:#FF8844}
-.counter{font-size:3.5em;font-weight:700;color:var(--green);text-align:center;margin:8px 0;font-variant-numeric:tabular-nums}
-.btn{display:inline-block;padding:12px 24px;border:none;border-radius:8px;font-size:1em;font-weight:600;cursor:pointer;color:#fff;text-align:center;min-width:100px;transition:opacity .2s}
-.btn:hover{opacity:.85}.btn:active{opacity:.7}.btn:disabled{opacity:.4;cursor:not-allowed}
-.btn-run{background:var(--green);color:#000;font-size:1.2em;width:100%}.btn-run.active{background:var(--red);color:#fff}
-.btn-blue{background:var(--accent)}.btn-dark{background:#3a3a3a}.btn-danger{background:#B42318}
-.btn-sm{padding:8px 12px;font-size:.85em;min-width:50px}
-.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row.ctr{justify-content:center}
-.sr{display:flex;justify-content:space-between;padding:4px 0;font-size:.9em}.sr .l{color:var(--muted)}.sr .v{font-weight:600;font-variant-numeric:tabular-nums}
-input[type=range]{width:100%;accent-color:var(--accent)}
-.sl{display:flex;justify-content:space-between;font-size:.85em;color:var(--muted);margin-bottom:4px}
-.st{font-size:.9em;color:var(--accent);font-weight:600;margin:12px 0 6px;text-transform:uppercase;letter-spacing:.05em}
-.ea{display:flex;gap:4px;align-items:center;justify-content:center;margin-top:6px}
-hr{border:none;border-top:1px solid #333;margin:8px 0}
-.upload{border:2px dashed #444;border-radius:8px;padding:20px;text-align:center;color:var(--muted);margin-top:8px;cursor:pointer}
+.counter{font-size:3.2em;font-weight:700;color:var(--green);text-align:center;margin:6px 0;font-variant-numeric:tabular-nums;line-height:1.1}
+.btn{display:inline-block;padding:10px 20px;border:none;border-radius:8px;font-size:.9em;font-weight:600;cursor:pointer;color:#fff;text-align:center;transition:opacity .15s}
+.btn:hover{opacity:.85}.btn:active{opacity:.7}.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn-run{background:var(--green);color:#000;font-size:1.1em;width:100%;padding:14px;border-radius:10px}.btn-run.active{background:var(--red);color:#fff}
+.btn-blue{background:var(--accent)}.btn-dark{background:#333}.btn-red{background:#B42318}
+.btn-sm{padding:6px 10px;font-size:.8em;border-radius:6px}
+.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.row.ctr{justify-content:center}
+.sr{display:flex;justify-content:space-between;padding:3px 0;font-size:.85em}.sr .l{color:var(--muted)}.sr .v{font-weight:600;font-variant-numeric:tabular-nums}
+.slider-row{display:flex;align-items:center;gap:10px;margin:6px 0}
+.slider-row input[type=range]{flex:1;height:4px;-webkit-appearance:none;background:var(--border);border-radius:2px;outline:none}
+.slider-row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);cursor:pointer}
+.slider-row span{min-width:50px;text-align:right;color:#fff;font-size:.85em;font-weight:600;font-variant-numeric:tabular-nums}
+.ea{display:flex;gap:3px;align-items:center;justify-content:center;margin:6px 0}
+.hint{font-size:.75em;color:var(--dim);margin:2px 0 6px}
+hr{border:none;border-top:1px solid var(--border);margin:10px 0}
+details{margin-top:10px}
+details summary{color:var(--accent);font-size:.85em;cursor:pointer;padding:4px 0;user-select:none}
+details summary:hover{opacity:.8}
+details[open] summary{margin-bottom:8px}
+.jam-alert{display:none;background:#2a1111;border:1px solid #442222;border-radius:10px;padding:12px;margin-top:10px;text-align:center}
+input[type=text],input[type=password]{width:100%;padding:10px;margin-bottom:6px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:#fff;font-size:.9em}
+.upload{border:2px dashed #444;border-radius:8px;padding:16px;text-align:center;color:var(--muted);cursor:pointer;font-size:.85em}
 .upload:hover{border-color:var(--accent)}.upload.on{border-color:var(--green);color:var(--green)}
-.pbar{width:100%;height:6px;background:#333;border-radius:3px;margin-top:8px;overflow:hidden;display:none}
+.pbar{width:100%;height:5px;background:#333;border-radius:3px;margin-top:6px;overflow:hidden;display:none}
 .pbar .fill{height:100%;background:var(--accent);width:0%;transition:width .3s;border-radius:3px}
-#otaS{font-size:.85em;margin-top:6px;min-height:1.2em}
-input[type=text],input[type=password]{width:100%;padding:8px;margin-bottom:6px;background:#222;border:1px solid #444;border-radius:6px;color:#fff;font-size:.9em}
+#otaS{font-size:.8em;margin-top:4px;min-height:1em}
+.log{background:#000;border-radius:8px;padding:8px;font-family:'Courier New',monospace;font-size:.7em;color:#0f0;height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
 </style></head><body>
-<h1>AutoLee</h1><div class="sub">by K.L Design</div>
+<div class="wrap">
 
-<div class="card">
-<div class="row ctr" style="gap:8px;margin-bottom:8px">
+<h1>AutoLee</h1>
+<div class="sub">by K.L Design · <span id="ver"></span></div>
+
+<!-- STATUS + COUNTER + RUN -->
+<div class="sec">
+<div class="row ctr" style="gap:6px;margin-bottom:6px">
 <span id="cb" class="badge warn">NOT CALIBRATED</span>
 <span id="sb" class="badge ok">IDLE</span></div>
 <div class="counter" id="ctr">0</div>
 <button class="btn btn-run" id="br" onclick="toggleRun()">RUN</button>
-<div id="jamAlert" style="display:none;background:#441111;border-radius:8px;padding:12px;margin-top:8px;text-align:center">
-<div style="color:#FF4444;font-weight:700;font-size:1.1em;margin-bottom:6px">&#9888; JAM DETECTED</div>
-<div style="color:#ccc;font-size:.85em;margin-bottom:8px">Motor stalled and backed off safely.</div>
+<div class="jam-alert" id="jamAlert">
+<div style="color:#FF4444;font-weight:700;margin-bottom:4px">&#9888; JAM DETECTED</div>
+<div style="color:#aaa;font-size:.8em;margin-bottom:8px">Motor stalled and backed off.</div>
 <button class="btn btn-blue" onclick="doAct('return_home')" id="bh">Return Home</button>
-</div></div>
+</div>
+</div>
 
-<div class="card"><h2>Speed</h2>
-<div class="sl"><span>Hz</span><span id="sv">30000</span></div>
-<input type="range" id="ss" min="10000" max="55000" value="30000" oninput="setSpd(this.value)"></div>
+<!-- SPEED PROFILE -->
+<div class="sec">
+<h2>Speed Profile</h2>
+<div class="row ctr" id="profileRow" style="gap:6px;margin-bottom:8px"></div>
+<div class="sr"><span class="l">Active</span><span class="v" id="sv">-</span></div>
+</div>
 
-<div class="card"><h2>Tuning</h2>
-<div class="sr"><span class="l">RAW UP</span><span class="v" id="ru">-</span></div>
-<div class="sr"><span class="l">RAW DOWN</span><span class="v" id="rd">-</span></div>
-<div class="sr"><span class="l">RAW TRAVEL</span><span class="v" id="rt">-</span></div><hr>
+<!-- TUNING (collapsible) -->
+<div class="sec">
+<h2>Tuning</h2>
+<div class="sr"><span class="l">Position</span><span class="v" id="cp">-</span></div>
 <div class="sr"><span class="l">Effective UP</span><span class="v" id="eu">-</span></div>
 <div class="sr"><span class="l">Effective DOWN</span><span class="v" id="ed">-</span></div>
-<div class="sr"><span class="l">Position</span><span class="v" id="cp">-</span></div>
-<div class="st">Endpoint UP offset</div>
+<details><summary>Endpoint offsets</summary>
+<div class="sr"><span class="l">RAW UP</span><span class="v" id="ru">-</span></div>
+<div class="sr"><span class="l">RAW DOWN</span><span class="v" id="rd">-</span></div>
+<div class="sr"><span class="l">RAW TRAVEL</span><span class="v" id="rt">-</span></div>
+<hr>
+<div class="hint">UP offset</div>
 <div class="ea">
 <button class="btn btn-dark btn-sm" onclick="adj('up',-100)">-100</button>
 <button class="btn btn-dark btn-sm" onclick="adj('up',-10)">-10</button>
@@ -1191,27 +1357,36 @@ input[type=text],input[type=password]{width:100%;padding:8px;margin-bottom:6px;b
 <button class="btn btn-blue btn-sm" onclick="adj('up',1)">+1</button>
 <button class="btn btn-blue btn-sm" onclick="adj('up',10)">+10</button>
 <button class="btn btn-blue btn-sm" onclick="adj('up',100)">+100</button></div>
-<div class="st">Endpoint DOWN offset</div>
+<div class="hint" style="margin-top:8px">DOWN offset</div>
 <div class="ea">
 <button class="btn btn-dark btn-sm" onclick="adj('down',-100)">-100</button>
 <button class="btn btn-dark btn-sm" onclick="adj('down',-10)">-10</button>
 <button class="btn btn-dark btn-sm" onclick="adj('down',-1)">-1</button>
 <button class="btn btn-blue btn-sm" onclick="adj('down',1)">+1</button>
 <button class="btn btn-blue btn-sm" onclick="adj('down',10)">+10</button>
-<button class="btn btn-blue btn-sm" onclick="adj('down',100)">+100</button></div></div>
+<button class="btn btn-blue btn-sm" onclick="adj('down',100)">+100</button></div>
+</details>
+</div>
 
-<div class="card"><h2>Stall Sensitivity</h2>
-<div class="sr"><span class="l">SG Trip threshold</span><span class="v" id="sgv">8</span></div>
-<div style="font-size:.8em;color:var(--muted);margin:4px 0">0 = off, lower = more sensitive (normal ~27, jam ~130+)</div>
+<!-- STALL + WORK ZONE -->
+<div class="sec">
+<h2>Stall Guard (per profile)</h2>
+<div id="sgProfiles"></div>
+<hr>
+<div class="sr"><span class="l">Work Zone (steps)</span><span class="v" id="wzv">5500</span></div>
+<div class="hint">Skip SG near DOWN endpoint (primer push area)</div>
 <div class="ea">
-<button class="btn btn-dark btn-sm" onclick="setSg(-5)">-5</button>
-<button class="btn btn-dark btn-sm" onclick="setSg(-1)">-1</button>
-<button class="btn btn-blue btn-sm" onclick="setSg(1)">+1</button>
-<button class="btn btn-blue btn-sm" onclick="setSg(5)">+5</button></div></div>
+<button class="btn btn-dark btn-sm" onclick="setWz(-500)">-500</button>
+<button class="btn btn-dark btn-sm" onclick="setWz(-100)">-100</button>
+<button class="btn btn-blue btn-sm" onclick="setWz(100)">+100</button>
+<button class="btn btn-blue btn-sm" onclick="setWz(500)">+500</button></div>
+</div>
 
-<div class="card"><h2>Batch Run</h2>
-<div class="sr"><span class="l">Target count</span><span class="v" id="btv">OFF</span></div>
-<div id="btStatus" style="font-size:.85em;color:var(--muted);margin:4px 0"></div>
+<!-- BATCH -->
+<div class="sec">
+<h2>Batch Run</h2>
+<div class="sr"><span class="l">Target</span><span class="v" id="btv">OFF</span></div>
+<div id="btStatus" class="hint"></div>
 <div class="ea">
 <button class="btn btn-dark btn-sm" onclick="setBatch(-100)">-100</button>
 <button class="btn btn-dark btn-sm" onclick="setBatch(-10)">-10</button>
@@ -1219,45 +1394,95 @@ input[type=text],input[type=password]{width:100%;padding:8px;margin-bottom:6px;b
 <button class="btn btn-blue btn-sm" onclick="setBatch(1)">+1</button>
 <button class="btn btn-blue btn-sm" onclick="setBatch(10)">+10</button>
 <button class="btn btn-blue btn-sm" onclick="setBatch(100)">+100</button></div>
-<div class="row ctr" style="margin-top:8px">
+<div class="row ctr" style="margin-top:8px;gap:6px">
 <button class="btn btn-blue btn-sm" onclick="doBatch('start')" id="bbStart">Start Batch</button>
-<button class="btn btn-dark btn-sm" onclick="doBatch('clear')">Clear</button></div></div>
+<button class="btn btn-dark btn-sm" onclick="doBatch('clear')">Clear</button></div>
+</div>
 
-<div class="card"><h2>Actions</h2>
-<div class="row ctr">
+<!-- ACTIONS -->
+<div class="sec">
+<h2>Actions</h2>
+<div class="row ctr" style="gap:8px">
 <button class="btn btn-dark" onclick="doAct('calibrate')" id="bc">Calibrate</button>
-<button class="btn btn-danger" onclick="doAct('reset_counter')">Reset Counter</button></div></div>
+<button class="btn btn-red" onclick="doAct('reset_counter')">Reset Counter</button></div>
+</div>
 
-<div class="card"><h2>WiFi</h2>
-<div style="font-size:.85em;color:var(--muted);margin-bottom:6px">Change credentials (reboot required):</div>
+<!-- LOG (collapsible) -->
+<div class="sec">
+<details><summary>Log</summary>
+<div class="log" id="logBox"></div>
+<button class="btn btn-dark btn-sm" onclick="document.getElementById('logBox').textContent='';fetch('/api/log_clear',{method:'POST'})" style="margin-top:6px;width:100%">Clear Log</button>
+</details>
+</div>
+
+<!-- WIFI + OTA (collapsible) -->
+<div class="sec">
+<details><summary>WiFi &amp; Firmware</summary>
+<div class="hint" style="margin-bottom:8px">Change WiFi (reboot required)</div>
 <input type="text" id="ns" placeholder="SSID">
 <input type="password" id="np" placeholder="Password">
-<button class="btn btn-blue" onclick="saveWifi()" style="width:100%">Save &amp; Reboot</button></div>
-
-<div class="card"><h2>Log</h2>
-<div id="logBox" style="background:#000;border-radius:6px;padding:8px;font-family:'Courier New',monospace;font-size:.75em;color:#0f0;height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-all"></div>
-<button class="btn btn-dark btn-sm" onclick="document.getElementById('logBox').textContent=''" style="margin-top:6px">Clear</button></div>
-
-<div class="card"><h2>Firmware Update (OTA)</h2>
+<div class="row" style="gap:6px;margin-bottom:12px">
+<button class="btn btn-blue btn-sm" onclick="saveWifi()" style="flex:1">Save &amp; Reboot</button>
+<button class="btn btn-red btn-sm" onclick="resetWifi()" style="flex:1">Reset WiFi</button></div>
+<hr>
+<div class="hint" style="margin:8px 0">Firmware update (OTA)</div>
 <div class="upload" id="ua" onclick="document.getElementById('fw').click()">
-Tap to select .bin file<br><span style="font-size:.8em">or drag &amp; drop</span></div>
+Tap to select .bin<br><span style="font-size:.8em">or drag &amp; drop</span></div>
 <input type="file" id="fw" accept=".bin" style="display:none" onchange="upFW(this.files[0])">
 <div class="pbar" id="pb"><div class="fill" id="pf"></div></div>
-<div id="otaS"></div></div>
+<div id="otaS"></div>
+</details>
+</div>
+
+</div>
 
 <script>
 let es;
 function sse(){es=new EventSource('/events');es.onmessage=e=>{try{upd(JSON.parse(e.data))}catch(x){}};
-es.addEventListener('log',e=>{try{const d=JSON.parse(e.data);const lb=document.getElementById('logBox');lb.textContent=d.log.join('\n');lb.scrollTop=lb.scrollHeight}catch(x){}});
+es.addEventListener('log',e=>{try{const d=JSON.parse(e.data);const lb=document.getElementById('logBox');lb.textContent+=d.log.join('\n')+'\n';lb.scrollTop=lb.scrollHeight}catch(x){}});
 es.onerror=()=>{es.close();setTimeout(sse,3000)}}
 sse();
 
+
+function buildProfileBtns(profiles,activeIdx){
+  const row=document.getElementById('profileRow');
+  if(!row)return;
+  row.innerHTML='';
+  profiles.forEach((p,i)=>{
+    const b=document.createElement('button');
+    b.className='btn '+(i===activeIdx?'btn-blue':'btn-dark')+' btn-sm';
+    b.style.cssText='flex:1;padding:10px 4px';
+    b.innerHTML=p.name+'<br><span style="font-size:.75em;opacity:.7">'+Math.round(p.hz/1000)+'kHz</span>';
+    b.onclick=()=>setProfile(i);
+    row.appendChild(b);
+  });
+}
+
+function buildSgControls(profiles,activeIdx){
+  const c=document.getElementById('sgProfiles');
+  if(!c)return;
+  c.innerHTML='';
+  profiles.forEach((p,i)=>{
+    const isActive=i===activeIdx;
+    const div=document.createElement('div');
+    div.style.cssText='margin-bottom:8px;padding:6px 8px;border-radius:8px;background:'+(isActive?'#1a2a3a':'#161616');
+    div.innerHTML='<div class="sr"><span class="l">'+p.name+' ('+Math.round(p.hz/1000)+'kHz)</span><span class="v" style="color:'+(isActive?'var(--green)':'var(--muted)')+'">SG='+p.sg+'</span></div>'
+      +'<div class="ea">'
+      +'<button class="btn btn-dark btn-sm" onclick="setSg('+i+',-5)">-5</button>'
+      +'<button class="btn btn-dark btn-sm" onclick="setSg('+i+',-1)">-1</button>'
+      +'<button class="btn btn-blue btn-sm" onclick="setSg('+i+',1)">+1</button>'
+      +'<button class="btn btn-blue btn-sm" onclick="setSg('+i+',5)">+5</button></div>';
+    c.appendChild(div);
+  });
+}
+
 function upd(d){
+  if(d.version)document.getElementById('ver').textContent='v'+d.version;
   document.getElementById('ctr').textContent=d.counter;
-  document.getElementById('sv').textContent=d.speed;
-  document.getElementById('ss').value=d.speed;
-  document.getElementById('cp').textContent=d.position;
-  document.getElementById('sgv').textContent=d.sgTrip;
+  document.getElementById('sv').textContent=d.profileName+' \u2014 '+d.speed+'Hz (SG='+d.sgTrip+')';
+    document.getElementById('cp').textContent=d.position;
+    document.getElementById('wzv').textContent=d.workZone;
+  if(d.profiles){buildProfileBtns(d.profiles,d.profileIdx);buildSgControls(d.profiles,d.profileIdx)}
   document.getElementById('btv').textContent=d.batchTarget>0?d.batchTarget:'OFF';
   const bts=document.getElementById('btStatus');
   const bbs=document.getElementById('bbStart');
@@ -1290,10 +1515,11 @@ function upd(d){
 }
 
 function toggleRun(){fetch('/api/toggle_run',{method:'POST'})}
-function setSg(d){fetch('/api/sg_trip?delta='+d,{method:'POST'})}
+function setSg(p,d){fetch('/api/sg_trip?profile='+p+'&delta='+d,{method:'POST'})}
+function setWz(d){fetch('/api/work_zone?delta='+d,{method:'POST'})}
 function setBatch(d){fetch('/api/batch?delta='+d,{method:'POST'})}
 function doBatch(a){fetch('/api/batch?action='+a,{method:'POST'})}
-function setSpd(v){document.getElementById('sv').textContent=v;fetch('/api/speed?hz='+v,{method:'POST'})}
+function setProfile(i){fetch('/api/profile?idx='+i,{method:'POST'})}
 function adj(w,d){fetch('/api/endpoint?which='+w+'&delta='+d,{method:'POST'})}
 function doAct(a){fetch('/api/action?do='+a,{method:'POST'})}
 function saveWifi(){
@@ -1301,6 +1527,10 @@ function saveWifi(){
   if(!s){alert('SSID required');return}
   fetch('/api/wifi?ssid='+encodeURIComponent(s)+'&pass='+encodeURIComponent(p),{method:'POST'})
   .then(()=>{alert('Saved! Rebooting...');setTimeout(()=>location.reload(),5000)})}
+function resetWifi(){
+  if(!confirm('Clear saved WiFi credentials and reboot into setup mode?'))return;
+  fetch('/api/wifi_reset',{method:'POST'})
+  .then(()=>{alert('WiFi cleared! Rebooting into setup mode...');setTimeout(()=>location.reload(),5000)})}
 
 function upFW(f){
   if(!f)return;
@@ -1323,9 +1553,88 @@ fetch('/api/state').then(r=>r.json()).then(upd).catch(()=>{});
 )rawliteral";
 
 
+// ==========================================================================
+//  WiFi Setup Page (captive portal)
+// ==========================================================================
+static const char WIFI_CSS[] PROGMEM =
+  "body{font-family:-apple-system,sans-serif;background:#111;color:#eee;padding:20px;}"
+  "h2{color:#7cf;}"
+  "input,select{width:100%;padding:12px;margin:6px 0;border-radius:8px;"
+  "border:1px solid #444;background:#222;color:#fff;box-sizing:border-box;}"
+  "button{width:100%;padding:12px;margin-top:10px;border:none;border-radius:8px;"
+  "color:#fff;font-size:16px;cursor:pointer;}"
+  ".btnSave{background:#28a745;}.btnClear{background:#c0392b;}"
+  ".box{max-width:420px;margin:auto;background:#1b1b1b;padding:20px;border-radius:12px;}"
+  "label{display:block;margin-top:10px;font-size:14px;color:#aaa;}";
+
+static String wifiConfigPage() {
+  String html;
+  html.reserve(3000);
+  html += "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>";
+  html += "<title>AutoLee WiFi Setup</title><style>";
+  html += FPSTR(WIFI_CSS);
+  html += "</style></head><body><div class='box'>";
+  html += "<h2>AutoLee WiFi Setup</h2>";
+  html += "<p style='color:#aaa;font-size:13px;'>by K.L Design</p>";
+  html += "<form method='POST' action='/save'>";
+  html += "<label>Select Network</label><select name='ssid_select'>" + scannedOptionsHTML + "</select>";
+  html += "<label>Or type SSID manually</label><input name='ssid_manual' placeholder='SSID (optional)'>";
+  html += "<label>Password</label><input name='pass' type='password' placeholder='WiFi password'>";
+  html += "<button class='btnSave' type='submit'>Save &amp; Reboot</button></form>";
+  html += "<form method='POST' action='/clear'><button class='btnClear' type='submit'>Clear Saved WiFi</button></form>";
+  html += "</div></body></html>";
+  return html;
+}
+
+static void setupCaptiveProbeEndpoints() {
+  const char* probes[] = {
+    "/generate_204", "/gen_204", "/hotspot-detect.html",
+    "/library/test/success.html", "/ncsi.txt", "/connecttest.txt", "/fwlink"
+  };
+  for (auto &p : probes)
+    webServer.on(p, HTTP_GET, [](AsyncWebServerRequest *r){ r->redirect("/"); });
+}
+
 static void setupWebServer() {
+  // Root page: WiFi config in AP mode, control panel in STA mode
   webServer.on("/", HTTP_GET, [](AsyncWebServerRequest *req) {
-    req->send_P(200, "text/html", INDEX_HTML);
+    if (wifiAPMode && !wifiConnected) {
+      req->send(200, "text/html", wifiConfigPage());
+    } else {
+      req->send_P(200, "text/html", INDEX_HTML);
+    }
+  });
+
+  // WiFi setup save (captive portal)
+  webServer.on("/save", HTTP_POST, [](AsyncWebServerRequest *req) {
+    String ss, sm, pw;
+    if (req->hasParam("ssid_select", true)) ss = req->getParam("ssid_select", true)->value();
+    if (req->hasParam("ssid_manual", true)) sm = req->getParam("ssid_manual", true)->value();
+    if (req->hasParam("pass", true))        pw = req->getParam("pass", true)->value();
+    sm.trim(); ss.trim();
+    String finalSSID = sm.length() ? sm : ss;
+    if (finalSSID.length() == 0) {
+      req->send(400, "text/html",
+        "<html><body style='font-family:sans-serif;text-align:center;padding:40px;background:#111;color:#eee;'>"
+        "<h2>Missing SSID</h2><p><a href='/' style='color:#7cf;'>Go back</a></p></body></html>");
+      return;
+    }
+    saveWiFiCredentials(finalSSID, pw);
+    req->send(200, "text/html",
+      "<html><body style='font-family:sans-serif;text-align:center;padding:40px;background:#111;color:#eee;'>"
+      "<h2 style='color:#28a745;'>Saved!</h2><p>Rebooting...</p></body></html>");
+    rebootRequested = true;
+    rebootRequestMs = millis();
+  });
+
+  // WiFi clear
+  webServer.on("/clear", HTTP_POST, [](AsyncWebServerRequest *req) {
+    clearWiFiCredentials();
+    req->send(200, "text/html",
+      "<html><body style='font-family:sans-serif;text-align:center;padding:40px;background:#111;color:#eee;'>"
+      "<h2>WiFi Cleared</h2><p>Rebooting...</p></body></html>");
+    rebootRequested = true;
+    rebootRequestMs = millis();
   });
 
   events.onConnect([](AsyncEventSourceClient *client) {
@@ -1348,13 +1657,12 @@ static void setupWebServer() {
     req->send(200, "text/plain", "ok");
   });
 
-  webServer.on("/api/speed", HTTP_POST, [](AsyncWebServerRequest *req) {
-    if (req->hasParam("hz")) {
-      uint32_t hz = req->getParam("hz")->value().toInt();
-      ui_speed_hz = constrain(hz, UI_SPEED_MIN, UI_SPEED_MAX);
-      if (stepper && runState == RUNNING) stepper->setSpeedInHz(ui_speed_hz);
-      if (slider_speed) lv_slider_set_value(slider_speed, ui_speed_hz, LV_ANIM_OFF);
-      ui_update_speed_val();
+  webServer.on("/api/profile", HTTP_POST, [](AsyncWebServerRequest *req) {
+    if (req->hasParam("idx")) {
+      uint8_t idx = (uint8_t)req->getParam("idx")->value().toInt();
+      if (idx < NUM_PROFILES) {
+        setActiveProfile(idx);
+      }
     }
     req->send(200, "text/plain", "ok");
   });
@@ -1373,11 +1681,26 @@ static void setupWebServer() {
   });
 
   webServer.on("/api/sg_trip", HTTP_POST, [](AsyncWebServerRequest *req) {
+    uint8_t tgt = activeProfile;
+    if (req->hasParam("profile")) {
+      uint8_t p = (uint8_t)req->getParam("profile")->value().toInt();
+      if (p < NUM_PROFILES) tgt = p;
+    }
     if (req->hasParam("delta")) {
       int32_t d = req->getParam("delta")->value().toInt();
-      int32_t v = (int32_t)RUN_SG_TRIP + d;
-      RUN_SG_TRIP = (uint16_t)constrain(v, (int32_t)RUN_SG_TRIP_MIN, (int32_t)RUN_SG_TRIP_MAX);
+      int32_t v = (int32_t)profiles[tgt].sg_trip + d;
+      profiles[tgt].sg_trip = (uint16_t)constrain(v, (int32_t)RUN_SG_TRIP_MIN, (int32_t)RUN_SG_TRIP_MAX);
       ui_update_sg_val();
+      ui_update_profile_screen();
+    }
+    req->send(200, "text/plain", "ok");
+  });
+
+  webServer.on("/api/work_zone", HTTP_POST, [](AsyncWebServerRequest *req) {
+    if (req->hasParam("delta")) {
+      int32_t d = req->getParam("delta")->value().toInt();
+      int32_t v = SG_WORK_ZONE_STEPS + d;
+      SG_WORK_ZONE_STEPS = constrain(v, SG_WORK_ZONE_MIN, SG_WORK_ZONE_MAX);
     }
     req->send(200, "text/plain", "ok");
   });
@@ -1435,29 +1758,61 @@ static void setupWebServer() {
     }
   });
 
+  webServer.on("/api/wifi_reset", HTTP_POST, [](AsyncWebServerRequest *req) {
+    clearWiFiCredentials();
+    req->send(200, "text/plain", "cleared");
+    rebootRequested = true;
+    rebootRequestMs = millis();
+  });
+
+  webServer.on("/api/log_clear", HTTP_POST, [](AsyncWebServerRequest *req) {
+    logHead = 0;
+    logSerial = 0;
+    logSentSerial = 0;
+    memset(logBuf, 0, sizeof(logBuf));
+    req->send(200, "text/plain", "ok");
+  });
+
+  // Captive portal probe endpoints (redirect to root)
+  if (captivePortalRunning) {
+    setupCaptiveProbeEndpoints();
+    webServer.onNotFound([](AsyncWebServerRequest *r) { r->redirect("/"); });
+  }
+
   // OTA firmware upload
   webServer.on("/api/ota", HTTP_POST,
     [](AsyncWebServerRequest *req) {
-      if (Update.hasError())
-        req->send(500, "text/plain", String("Update failed: ") + Update.errorString());
-      else {
+      bool ok = !Update.hasError();
+      if (ok) {
         req->send(200, "text/plain", "OK");
-        delay(500);
-        ESP.restart();
+        rebootRequested = true;
+        rebootRequestMs = millis();
+      } else {
+        req->send(500, "text/plain", String("Update failed: ") + Update.errorString());
       }
     },
     [](AsyncWebServerRequest *req, const String &filename, size_t index,
        uint8_t *data, size_t len, bool final) {
       if (index == 0) {
-        Serial.printf("OTA: upload '%s'", filename.c_str());
-        if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial);
+        Serial.printf("OTA: upload '%s'\n", filename.c_str());
+        // Stop motor if running
+        if (runState == RUNNING) requestGracefulStop();
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+          Update.printError(Serial);
+          return;
+        }
       }
       if (Update.isRunning()) {
-        if (Update.write(data, len) != len) Update.printError(Serial);
+        if (Update.write(data, len) != len) {
+          Update.printError(Serial);
+          return;
+        }
       }
       if (final) {
-        if (Update.end(true)) Serial.printf("OTA: success, %u bytes", index + len);
-        else Update.printError(Serial);
+        if (Update.end(true))
+          Serial.printf("OTA: success, %u bytes\n", index + len);
+        else
+          Update.printError(Serial);
       }
     }
   );
@@ -1509,16 +1864,25 @@ static void broadcastState() {
   if (events.count() == 0) return;
   events.send(buildStateJSON().c_str(), NULL, millis());
 
-  // Send new log lines if any
-  if (logDirty) {
-    logDirty = false;
+  // Send only NEW log lines since last broadcast
+  if (logSerial > logSentSerial) {
+    uint32_t pending = logSerial - logSentSerial;
+    // Can't send more than what's in the ring buffer
+    if (pending > LOG_LINES) {
+      logSentSerial = logSerial - LOG_LINES;
+      pending = LOG_LINES;
+    }
+    // Cap per broadcast to avoid huge payloads
+    if (pending > 20) {
+      logSentSerial = logSerial - 20;
+      pending = 20;
+    }
     String logJson = "{\"log\":[";
-    uint8_t start = (logCount < LOG_LINES) ? 0 : logHead;
-    for (uint8_t i = 0; i < logCount; i++) {
-      uint8_t idx = (start + i) % LOG_LINES;
+    uint16_t startIdx = (logHead + LOG_LINES - (uint16_t)pending) % LOG_LINES;
+    for (uint16_t i = 0; i < (uint16_t)pending; i++) {
+      uint16_t idx = (startIdx + i) % LOG_LINES;
       if (i > 0) logJson += ',';
       logJson += '"';
-      // Escape quotes in log lines
       for (const char *p = logBuf[idx]; *p; p++) {
         if (*p == '"') logJson += "\\\"";
         else if (*p == '\\') logJson += "\\\\";
@@ -1528,6 +1892,7 @@ static void broadcastState() {
     }
     logJson += "]}";
     events.send(logJson.c_str(), "log", millis());
+    logSentSerial = logSerial;
   }
 }
 
@@ -1536,7 +1901,7 @@ static void broadcastState() {
 // ==========================================================================
 void setup() {
   Serial.begin(115200);
-  Serial.println("=== AutoLee v2.0 ===");
+  Serial.printf("=== AutoLee v%s ===\n", FW_VERSION);
 
   SPI.begin(1, 3, 2, TMC_CS);
   pinMode(14, OUTPUT); digitalWrite(14, HIGH);
@@ -1602,7 +1967,7 @@ void setup() {
   stepper->setEnablePin(ENABLE_PIN);
   stepper->setAutoEnable(true);
   stepper->setSpeedInHz(ui_speed_hz);
-  stepper->setAcceleration(RUN_ACCEL);
+  stepper->setAcceleration(RUN_DECEL);
 
   // ---- BUILD UI ----
   main_scr = lv_scr_act();
@@ -1618,14 +1983,34 @@ void setup() {
   lv_obj_set_style_text_color(sub, lv_color_hex(0xAAAAAA), LV_PART_MAIN);
   lv_obj_align_to(sub, title, LV_ALIGN_OUT_BOTTOM_MID, 0, 4);
 
+  // Speed profile indicator on main screen
+  lbl_speed_val = lv_label_create(mc);
+  lv_label_set_text(lbl_speed_val, "");
+  lv_obj_set_style_text_font(lbl_speed_val, &lv_font_montserrat_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(lbl_speed_val, lv_color_hex(0x6FA8FF), LV_PART_MAIN);
+  lv_obj_set_style_text_align(lbl_speed_val, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_align_to(lbl_speed_val, sub, LV_ALIGN_OUT_BOTTOM_MID, 0, 4);
+
   ui_create_main_warning(mc);
-  lv_obj_align_to(main_warn, sub, LV_ALIGN_OUT_BOTTOM_MID, 0, 8);
+  lv_obj_align_to(main_warn, lbl_speed_val, LV_ALIGN_OUT_BOTTOM_MID, 0, 4);
 
   counter_label = lv_label_create(mc);
   lv_label_set_text_fmt(counter_label, "%ld", min(counter, 9999L));
   lv_obj_set_style_text_font(counter_label, &lv_font_montserrat_48, LV_PART_MAIN);
   lv_obj_set_style_text_color(counter_label, lv_color_hex(0x00FF00), LV_PART_MAIN);
   lv_obj_align(counter_label, LV_ALIGN_CENTER, 0, -30);
+  // Long-press counter to reset (make label clickable first)
+  lv_obj_add_flag(counter_label, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(counter_label, [](lv_event_t *e) {
+    LV_UNUSED(e);
+    counter = 0;
+    lv_label_set_text(counter_label, "0");
+    // Brief red flash to confirm reset
+    lv_obj_set_style_text_color(counter_label, lv_color_hex(0xFF4444), LV_PART_MAIN);
+    lv_timer_handler();
+    delay(200);
+    lv_obj_set_style_text_color(counter_label, lv_color_hex(0x00FF00), LV_PART_MAIN);
+  }, LV_EVENT_LONG_PRESSED, nullptr);
 
   // Batch remaining label (below counter, hidden when no batch)
   lbl_batch_remain = lv_label_create(mc);
@@ -1652,35 +2037,38 @@ void setup() {
   lv_obj_add_flag(sc, LV_OBJ_FLAG_SCROLLABLE);       // enable scroll
   lv_obj_t *sn = make_nav(settings_scr);
   lv_obj_t *st2 = make_title(sc, "Settings"); lv_obj_align(st2, LV_ALIGN_TOP_MID, 0, 2);
-  lv_obj_t *b_speed  = make_btn(sc, "Speed",    140, 44, 0x1F6FEB, &lv_font_montserrat_20);
-  lv_obj_t *b_tuning = make_btn(sc, "Tuning",   140, 44, 0x1F6FEB, &lv_font_montserrat_20);
   lv_obj_t *b_cal    = make_btn(sc, "Calibrate",140, 44, 0x444444, &lv_font_montserrat_20);
+  lv_obj_t *b_tuning = make_btn(sc, "Tuning",   140, 44, 0x1F6FEB, &lv_font_montserrat_20);
+  lv_obj_t *b_speed  = make_btn(sc, "Speed Profile",140, 44, 0x1F6FEB, &lv_font_montserrat_20);
   lv_obj_t *b_stall  = make_btn(sc, "Stall Sens.",140, 44, 0x1F6FEB, &lv_font_montserrat_20);
-  lv_obj_t *b_reset  = make_btn(sc, "Reset counter", 140, 44, 0xB42318, &lv_font_montserrat_18);
   lv_obj_t *b_wifi   = make_btn(sc, "WiFi Info",140, 44, 0x1F6FEB, &lv_font_montserrat_20);
   lv_obj_t *b_back_s = make_btn(sn, "Back", 140, 44, 0x2A2A2A, &lv_font_montserrat_20);
   lv_obj_align(b_back_s, LV_ALIGN_CENTER, 0, 0);
 
-  // Speed screen
-  speed_scr = lv_obj_create(NULL); style_screen(speed_scr);
-  lv_obj_t *pc = make_content(speed_scr);
-  lv_obj_t *pn = make_nav(speed_scr);
+  // Profile screen (replaces old Speed screen)
+  profile_scr = lv_obj_create(NULL); style_screen(profile_scr);
+  lv_obj_t *pc = make_content(profile_scr);
+  lv_obj_t *pn = make_nav(profile_scr);
   lv_obj_t *pt = make_title(pc, "Speed"); lv_obj_align(pt, LV_ALIGN_TOP_MID, 0, 2);
-  lv_obj_t *card = make_card(pc, 150, 110);
-  lv_obj_t *lblHz = lv_label_create(card);
-  lv_label_set_text(lblHz, "Hz");
-  lv_obj_set_style_text_color(lblHz, lv_color_hex(0xCFCFCF), LV_PART_MAIN);
-  lv_obj_set_style_text_font(lblHz, &lv_font_montserrat_14, LV_PART_MAIN);
-  lv_obj_align(lblHz, LV_ALIGN_TOP_LEFT, 0, 0);
-  lbl_speed_val = lv_label_create(card);
-  lv_obj_set_style_text_color(lbl_speed_val, lv_color_hex(0x00FF00), LV_PART_MAIN);
-  lv_obj_set_style_text_font(lbl_speed_val, &lv_font_montserrat_22, LV_PART_MAIN);
-  lv_obj_align(lbl_speed_val, LV_ALIGN_TOP_RIGHT, 0, 0);
-  slider_speed = lv_slider_create(card);
-  lv_slider_set_range(slider_speed, UI_SPEED_MIN, UI_SPEED_MAX);
-  lv_slider_set_value(slider_speed, ui_speed_hz, LV_ANIM_OFF);
-  lv_obj_set_size(slider_speed, 130, 16);
-  lv_obj_align(slider_speed, LV_ALIGN_BOTTOM_MID, 0, -6);
+
+  // Info card showing current Hz + SG
+  lv_obj_t *pcard = make_card(pc, 150, 50);
+  lbl_profile_info = lv_label_create(pcard);
+  lv_obj_set_style_text_color(lbl_profile_info, lv_color_hex(0x00FF00), LV_PART_MAIN);
+  lv_obj_set_style_text_font(lbl_profile_info, &lv_font_montserrat_18, LV_PART_MAIN);
+  lv_obj_center(lbl_profile_info);
+
+  // Three profile buttons
+  for (uint8_t i = 0; i < NUM_PROFILES; i++) {
+    char label[32];
+    snprintf(label, sizeof(label), "%s\n%lukHz", profiles[i].name, (unsigned long)(profiles[i].speed_hz / 1000));
+    profile_btns[i] = make_btn_multiline(pc, label, 140, 48, 0x3A3A3A, &lv_font_montserrat_18);
+    lv_obj_add_event_cb(profile_btns[i], [](lv_event_t *e) {
+      uint8_t idx = (uint8_t)(intptr_t)lv_event_get_user_data(e);
+      setActiveProfile(idx);
+    }, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+  }
+
   lv_obj_t *b_back_p = make_btn(pn, "Back", 140, 44, 0x2A2A2A, &lv_font_montserrat_20);
   lv_obj_align(b_back_p, LV_ALIGN_CENTER, 0, 0);
 
@@ -1921,14 +2309,12 @@ void setup() {
     else if (runState == RUNNING) { requestGracefulStop(); setRunButtonState(false); batchActive = false; }
   }, LV_EVENT_CLICKED, nullptr);
 
-  lv_obj_add_event_cb(b_speed,  on_go_speed,  LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(b_speed,  on_go_profile, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_tuning, on_go_tuning, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_cal,    on_calibrate, LV_EVENT_CLICKED, nullptr);
-  lv_obj_add_event_cb(b_reset,  on_reset_counter, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_back_s, on_go_main, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_stall, [](lv_event_t *e){ LV_UNUSED(e); ui_update_sg_val(); go(stall_scr); }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_wifi, [](lv_event_t *e){ LV_UNUSED(e); ui_update_wifi_label(); go(wifi_scr); }, LV_EVENT_CLICKED, nullptr);
-  lv_obj_add_event_cb(slider_speed, on_speed_slider, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(b_back_p, [](lv_event_t *e){ LV_UNUSED(e); go(settings_scr); }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(btn_eu, on_go_ep_up, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(btn_ed, on_go_ep_dn, LV_EVENT_CLICKED, nullptr);
@@ -1938,6 +2324,7 @@ void setup() {
   lv_timer_create(counter_timer_cb, 100, nullptr);
 
   ui_update_speed_val();
+  ui_update_profile_screen();
   recomputeEffectiveEndpoints();
   ui_update_tuning_numbers();
   ui_update_endpoint_edit_values();
@@ -1963,6 +2350,11 @@ void loop() {
   handleWebHome();
   ArduinoOTA.handle();
   broadcastState();
+
+  // Process captive portal DNS requests
+  if (captivePortalRunning) {
+    dnsServer.processNextRequest();
+  }
 
   // Deferred reboot (safe from main loop context)
   if (rebootRequested && (millis() - rebootRequestMs) > 500) {
