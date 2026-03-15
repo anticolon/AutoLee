@@ -2,7 +2,7 @@
 
 **Automated Lee APP conversion — ESP32-C6 firmware with touchscreen UI and web control.**
 
-AutoLee converts a manual Lee APP into a fully automated priming machine using a stepper motor, sensorless homing, and stallguard jam detection. It runs on a tiny 1.47" touchscreen ESP32-C6 module and can also be controlled from any phone/computer via its built-in web interface.
+AutoLee converts a manual Lee APP into a fully automated decapping machine using a stepper motor, sensorless homing, and stallguard jam detection. It runs on a tiny 1.47" touchscreen ESP32-C6 module and can also be controlled from any phone/computer via its built-in web interface.
 
 > **By K.L Design**
 
@@ -28,19 +28,18 @@ The stall detection and jam protection features are designed to detect brass get
 ### Motion & Calibration
 - **Sensorless calibration** — automatically finds the UP and DOWN mechanical stops using TMC5160 StallGuard, no limit switches needed
 - **Adjustable endpoints** — fine-tune UP and DOWN positions in ±1/10/100 step increments after calibration
-- **Fast ramp profile** — 800,000 steps/s² accel/decel (RUN_DECEL) for maximum cruise time and StallGuard coverage
+- **Fast ramp profile** — 800,000 steps/s² accel/decel for maximum cruise time and StallGuard coverage
 - **Safe return-home** — after a jam or stall, creeps back to UP stop using calibration speed with stall detection and retries
 
-### Speed Profiles
-- **Three preset profiles** — Slow (15 kHz, SG=350), Normal (35 kHz, SG=15), Fast (45 kHz, SG=1)
+### Speed Profiles (v1.5+)
+- **Three preset profiles** — Slow (15 kHz), Normal (35 kHz), Fast (45 kHz)
 - **Per-profile StallGuard threshold** — each speed has its own SG trip value, eliminating false jams when changing speed
 - **One-tap switching** — change profile from the touchscreen or web UI; speed and SG update together instantly
-- **Fine-tune SG per profile** — type a value directly into text inputs on the web Configuration page, or use ±1/±5 buttons on the touch screen
+- **Fine-tune SG per profile** — adjust ±1/±5 from the touch Stall Sensitivity screen or per-profile web controls
 
-### Motor Current
-- **Adjustable run current** — 1,000–4,500 mA via web slider (default 3,500 mA)
-- **Overcurrent warning** — values above 4,000 mA show a warning (exceeds motor rating, ensure cooling)
-- **Live adjustment** — takes effect immediately, no restart needed
+### Motor Current (v1.6)
+- **Adjustable run current** — set motor current from 1000–4500 mA via touch UI or web interface
+- **Independent from calibration current** — calibration always uses a fixed 3200 mA regardless of the run current setting
 
 ### Jam Detection & Protection
 - **Runtime StallGuard monitoring** — reads SG2 via median-of-5 filtered SPI during operation
@@ -59,32 +58,174 @@ The stall detection and jam protection features are designed to detect brass get
 - **Stroke counter** — counts each completed down-up cycle, displayed large on the main screen (max 9999)
 - **Resettable** from touch UI or web interface
 
-### Touch UI (172×320 LVGL)
-- **Main screen** — counter (centered), active speed profile indicator, calibration warning, batch remaining, buttons for Batch Run and Settings
-- **Settings screen** — Calibrate, Configuration, Reset Counter, WiFi Info
-- **Configuration screen** — Speed Profile, Endpoints, Stall Guard
-- **Speed Profile screen** — three buttons with green highlight on active, info card showing Hz + SG
-- **Endpoints (tuning) screen** — raw and effective endpoint values, buttons to edit UP and DOWN
-- **Stall Guard screen** — adjust SG trip for the active profile with ±1/±5 buttons
+### Touch UI (172×320 LVGL, multi-page)
+- **Main screen** — counter, active speed profile indicator, calibration warning, batch remaining
+- **Speed Profile screen** — three large buttons with green highlight on active, info card showing Hz + SG
+- **Motor Current screen** — adjust run current with ±100 mA buttons
+- **Tuning screen** — raw and effective endpoint values, buttons to edit UP and DOWN endpoints
+- **Stall Sensitivity screen** — adjust SG trip for the active profile with ±1/±5 buttons
 - **Batch Run screen** — set target count with ±1/10/100 buttons, start batch
+- **Settings screen** — access to all sub-screens, calibrate button, reset counter, WiFi info
 - **Jam screen** — warning display with one-button return home
-- **WiFi screen** — shows connected SSID and IP address, or AP info
+- **WiFi screen** — shows current IP or AP info
 
-### Web Interface (5-page layout)
+### Web Interface
 - **Full control from any browser** — responsive dark-theme UI works on phone and desktop
 - **Real-time updates** — Server-Sent Events (SSE) push state changes at 250 ms intervals
-- **Main page** — status, counter, RUN/STOP, calibrate, reset counter, speed profile selector, batch run controls
-- **Configuration page** — motor current slider (1,000–4,500 mA with overcurrent warning), endpoint tuning with collapsible offsets, per-profile StallGuard text inputs, work zone adjustment
-- **Log page** — full-height 500-line scrollable log with real-time streaming and clear button
-- **Firmware page** — drag-and-drop OTA .bin upload with progress bar
-- **WiFi page** — shows connection status, SSID, and IP address; change credentials, reset to AP mode
-- **Footer navigation** — blue text links on every page to jump between all five pages
+- **Speed profile selector** — three profile buttons with active highlight
+- **Per-profile SG controls** — independent ±1/±5 adjustment for each profile's StallGuard threshold
+- **Motor current controls** — adjust run current with ±100 mA buttons
+- **Work zone adjustment** — ±100/±500 step controls for the SG blanking zone
+- **Endpoint tuning** — collapsible section with ±1/10/100 offset controls for UP and DOWN
+- **Batch run controls** — set target, start, clear
+- **Live log viewer** — 500-line scrollable log with real-time streaming
+- **OTA firmware update** — drag-and-drop .bin upload with progress bar
+- **WiFi configuration** — scan and select networks, save credentials, reset to AP mode
 
 ### WiFi & Networking
 - **Auto-connect** — attempts saved credentials on boot, falls back to AP if it fails
 - **Captive portal** — open AP mode (`AutoLee-Setup`, no password) with DNS redirect so any device gets the setup page automatically
 - **Network scanner** — scans available WiFi networks and presents them in a dropdown
-- **ArduinoOTA support** — update firmware from PlatformIO/Arduino IDE over the network (hostname: `autolee`, password: `autolee`)
+- **ArduinoOTA support** — update firmware from PlatformIO over the network (hostname: `autolee`, password: `autolee`)
+
+---
+
+## Project Structure
+
+The firmware was originally a single-file Arduino sketch. It has been refactored into a modular architecture with extracted, testable components:
+
+```
+AutoLee/
+├── src/
+│   └── AutoLee.ino          # Main sketch — setup(), loop(), glue code
+├── include/
+│   ├── config.h              # Pin defs, constants, speed profile struct
+│   ├── motor_fsm.h           # Motor state machine (IDLE/RUNNING/STOPPING/…)
+│   ├── motor.h               # Motor control, calibration, homing routines
+│   ├── stall_monitor.h       # Runtime stall detection sliding counter + blanking
+│   ├── calibration.h         # Calibration hit detection (early + baseline + dynamic)
+│   ├── batch.h               # Batch run state machine
+│   ├── sg_filter.h           # StallGuard median-of-5 filter + helpers
+│   ├── endpoint_math.h       # Endpoint clamping and offset math
+│   ├── log_ring.h            # Ring buffer for the 500-line log
+│   ├── state_json.h          # Pure JSON state serialization
+│   ├── theme.h               # UI theme constants (colors, sizes)
+│   ├── ui.h                  # LVGL touchscreen UI (all screens)
+│   └── web.h                 # Web server, SSE, OTA, WiFi config
+├── test/
+│   └── test_native/
+│       ├── test_motor_fsm/   # 29 tests — state transitions, guards, edge cases
+│       ├── test_stall_monitor/ # 20 tests — blanking windows, sliding counter, jam
+│       ├── test_calibration/ # 19 tests — early trip, baseline, dynamic hit
+│       ├── test_batch/       # 15 tests — batch counting, start/clear/done
+│       ├── test_sg_filter/   # 16 tests — median filter, SG helpers
+│       ├── test_endpoint_math/ # 15 tests — clamping, offset logic
+│       ├── test_log_ring/    # 10 tests — ring buffer push/wrap/clear
+│       ├── test_state_json/  # 14 tests — JSON serialization, truncation
+│       └── test_main/        # Smoke test
+├── tools/
+│   └── mock_server.py        # Mock web UI server (no hardware needed)
+├── docs/
+│   └── plans/                # Architecture and refactor planning docs
+├── platformio.ini            # PlatformIO project config (esp32c6 + native)
+├── justfile                  # Build/test/flash task runner
+└── lv_conf.h                 # LVGL configuration
+```
+
+### Architecture
+
+The core logic is split into **pure, header-only modules** that can be compiled and tested on your host machine (no ESP32 required):
+
+| Module | Responsibility |
+|---|---|
+| `motor_fsm.h` | Explicit state machine with typed `MotorState` / `MotorEvent` enums and a transition table. Guards like `canRun()` and `isMoving()` prevent invalid operations. |
+| `stall_monitor.h` | Runtime stall detection — sliding high/low counter with accel, work-zone, and decel blanking windows. Returns `BLANKED`, `OK`, or `JAM`. |
+| `calibration.h` | Calibration hit detection — three-phase detector: early trip (immediate wall), baseline tracking with dynamic threshold, and confirmation counting. |
+| `batch.h` | Batch run counting — tracks target, completed count, and done/active state. |
+| `sg_filter.h` | Median-of-5 filter for StallGuard SPI reads, plus blanking helper functions. |
+| `endpoint_math.h` | Pure math for endpoint offset clamping and position calculations. |
+| `log_ring.h` | Fixed-size ring buffer for log lines with wrap-around and clear. |
+| `state_json.h` | Pure JSON serialization of device state — takes a `StateSnapshot` struct, produces JSON string. |
+
+The heavier hardware-dependent modules (`motor.h`, `ui.h`, `web.h`) are separated for readability but compile only on ESP32.
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- [PlatformIO](https://platformio.org/) (recommended via `pipx`)
+- [just](https://github.com/casey/just) command runner (optional but makes everything easier)
+
+### Quick Start
+
+```bash
+# Clone
+git clone https://github.com/your-org/AutoLee.git
+cd AutoLee
+
+# Install PlatformIO and fetch all libraries
+just setup
+
+# Run all unit tests (no hardware needed)
+just test
+
+# Build firmware
+just build
+
+# Flash to connected ESP32-C6
+just flash
+```
+
+If you don't have `just` installed:
+
+```bash
+# macOS
+brew install just
+
+# Linux (most distros)
+# See https://github.com/casey/just#installation
+
+# Or use PlatformIO directly:
+pio test -e native -v          # run tests
+pio run -e esp32c6             # build firmware
+pio run -e esp32c6 -t upload   # flash
+```
+
+### Available just Recipes
+
+| Recipe | Description |
+|---|---|
+| `just setup` | Install PlatformIO and fetch all library dependencies |
+| `just test` | Run all native unit tests |
+| `just test-one <suite>` | Run a single test suite (e.g. `just test-one motor_fsm`) |
+| `just build` | Build firmware for ESP32-C6 |
+| `just flash` | Upload firmware to connected board |
+| `just monitor` | Open serial monitor at 115200 baud |
+| `just run` | Build + flash + monitor in one step |
+| `just ota [host]` | OTA upload (default: `autolee.local`) |
+| `just mock` | Run the mock web server for UI development |
+| `just files` | Show source/test file structure and line counts |
+| `just log` | Show recent git history |
+
+### Mock Web Server
+
+For working on the web UI without any hardware:
+
+```bash
+just mock
+# Opens http://localhost:8080 with a simulated AutoLee backend
+```
+
+The mock server (`tools/mock_server.py`) serves the same web interface with fake state data and responds to all API endpoints, so you can develop and test the UI in a browser.
+
+### OTA Updates
+
+After first flash, firmware can be updated two ways:
+
+- **Web UI** — open the AutoLee web interface, scroll to "Firmware Update", drag and drop a `.bin` file
+- **ArduinoOTA** — `just ota` (or `just ota 192.168.1.x` for a specific IP)
 
 ---
 
@@ -153,62 +294,18 @@ The stall detection and jam protection features are designed to detect brass get
 
 ---
 
-## Software Setup
-
-### Dependencies (Arduino / PlatformIO)
-
-| Library | Version | Install | Purpose |
-|---|---|---|---|
-| `LVGL` | v8.4.0 | Online | Touchscreen UI framework |
-| `GFX_Library_for_Arduino` | v1.5.9 | Online | ST7789 display driver |
-| `TMCStepper` | — | Online | TMC5160 SPI communication |
-| `FastAccelStepper` | — | Online | Step pulse generation with acceleration |
-| `ESPAsyncWebServer` + `AsyncTCP` | — | Online | Web server & SSE |
-| `ArduinoOTA` | — | Online | Over-the-air firmware updates |
-| `DNSServer` | — | Online | Captive portal redirect |
-| `esp_lcd_touch_axs5106l` | — | **Offline** | AXS5106L touch controller driver |
-
-> **Note:** The `esp_lcd_touch_axs5106l` library is **not available** in the Arduino Library Manager. You must install it manually from Waveshare's demo package — see step 3 below.
-
-### Build & Flash
-
-1. Clone this repo
-2. Install all "Online" libraries above via the Arduino Library Manager
-3. Install the touch driver **offline**:
-   - Download the [Waveshare ESP32-C6-Touch-LCD-1.47 demo package](https://www.waveshare.com/wiki/ESP32-C6-Touch-LCD-1.47)
-   - Find the `esp_lcd_touch_axs5106l` library folder inside the package
-   - Copy it to your Arduino `libraries` directory
-4. Set up LVGL:
-   - Copy `lv_conf.h` from this repo to sit **next to** your `lvgl` library folder (not inside it)
-   - Copy the `demos` folder from inside the LVGL library into its `src` folder
-5. Open `AutoLee.ino` in Arduino IDE or PlatformIO
-6. Select board: **ESP32-C6**
-7. Set partition scheme: **Minimal SPIFFS (1.9 MB APP with OTA/190 KB SPIFFS)** — the firmware is too large for the default partition layout
-8. Compile and flash
-
-### OTA Updates
-
-After first flash, firmware can be updated two ways:
-
-- **Web UI** — open the AutoLee web interface, go to the Firmware page, drag and drop a `.bin` file
-- **ArduinoOTA** — hostname `autolee`, password `autolee`
-
----
-
 ## Configuration
 
-Key constants at the top of `AutoLee.ino`:
+Key constants live in `include/config.h`:
 
 | Constant | Default | Description |
 |---|---|---|
-| `profiles[0]` (Slow) | 15,000 Hz / SG 350 | Low speed, high SG threshold — max torque for tough primers |
-| `profiles[1]` (Normal) | 35,000 Hz / SG 15 | Balanced speed and sensitivity |
-| `profiles[2]` (Fast) | 45,000 Hz / SG 1 | High speed, very sensitive stall detection |
-| `RUN_CURRENT_MA` | 3,500 mA | Motor run current (adjustable 1,000–4,500 via web UI) |
-| `RUN_DECEL` | 800,000 | Accel/decel rate (steps/s²) |
-| `CAL_CURRENT_MA` | 3,200 | Calibration current (mA, fixed) |
+| `profiles[0..2]` | 15k/35k/45k Hz | Speed profiles (Slow/Normal/Fast) with SG thresholds |
+| `RUN_ACCEL` | 800,000 | Accel/decel rate (steps/s²) |
+| `RUN_CURRENT_MA` | 2,500 | Motor run current (mA), adjustable 1000–4500 |
+| `CAL_CURRENT_MA` | 3,200 | Calibration current (mA) |
 | `CAL_SPEED_HZ` | 8,000 | Calibration speed (Hz) |
-| `SG_WORK_ZONE_STEPS` | 5,500 | SG blanking zone near DOWN endpoint |
+| `SG_WORK_ZONE_MIN/MAX` | 0 / 20,000 | SG blanking zone limits |
 | `DOWN_OFFSET_DEFAULT` | −500 | Default DOWN endpoint offset after calibration |
 | `CAL_SGT` | −1 | StallGuard sensitivity for calibration |
 
@@ -223,8 +320,7 @@ All endpoints accept `POST` requests.
 | `GET /api/state` | — | Returns full JSON state |
 | `/api/toggle_run` | — | Start or stop running |
 | `/api/profile` | `idx=0\|1\|2` | Switch speed profile |
-| `/api/sg_trip` | `value=N` or `delta=N`, `&profile=N` (optional) | Set or adjust SG threshold; targets active profile by default |
-| `/api/current` | `ma=N` | Set motor run current (1,000–4,500 mA) |
+| `/api/sg_trip` | `delta=N` `&profile=N` (optional) | Adjust SG threshold; targets active profile by default |
 | `/api/work_zone` | `delta=N` | Adjust work zone blanking steps |
 | `/api/endpoint` | `which=up\|down` `&delta=N` | Adjust endpoint offset |
 | `/api/batch` | `delta=N` or `action=start\|clear` | Adjust batch target or start/clear |
@@ -238,11 +334,34 @@ SSE stream available at `/events` — pushes JSON state every 250 ms and log lin
 
 ---
 
+## Testing
+
+The pure-logic modules are tested natively on your development machine using [Unity](http://www.throwtheswitch.org/unity) via PlatformIO's `native` environment — no ESP32 hardware needed.
+
+```bash
+# Run all tests
+just test
+
+# Run one suite
+just test-one motor_fsm
+just test-one stall_monitor
+just test-one calibration
+just test-one batch
+just test-one sg_filter
+just test-one endpoint_math
+just test-one log_ring
+just test-one state_json
+```
+
+The test suites cover state transitions, boundary conditions, overflow behavior, and edge cases across all extracted modules.
+
+---
+
 ## Version History
 
 | Version | Changes |
 |---|---|
-| **v1.6** | Adjustable motor current (1,000–4,500 mA) via web; multi-page web UI (Main, Configuration, Log, Firmware, WiFi); touch UI restructured (Settings → Configuration sub-menu); WiFi page shows SSID + IP; SG text inputs with auto-submit on blur; profiles retuned (Slow 15kHz/350, Normal 35kHz/15, Fast 45kHz/1); all labels fitted to 172px display |
+| **v1.6** | Modular architecture (motor FSM, stall monitor, calibration detector, batch, SG filter, endpoint math, log ring, state JSON extracted as testable headers); multi-page touch UI; adjustable motor current; updated speed profiles (15k/35k/45k); PlatformIO build system with `just` task runner; 140 native unit tests; mock web server for UI development |
 | **v1.5** | Speed profiles (Slow/Normal/Fast) replace speed slider; per-profile SG thresholds; profile API |
 | **v1.4** | Captive portal WiFi; work zone SG blanking; RUN_DECEL 800k; median-of-5 SPI filter; sliding counter stall detection; 500-line log; redesigned web UI |
 | **v1.3** | Batch run; jam screen with return-home; runtime StallGuard monitoring; web log viewer |
