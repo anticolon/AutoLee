@@ -135,26 +135,6 @@ The stall detection and jam protection features are designed to detect brass get
 | GPIO 6 | DIR | Direction |
 | GPIO 7 | DIAG1 | StallGuard diagnostic output |
 
-### Display (shared SPI bus)
-
-| ESP32-C6 Pin | Display Pin | Function |
-|:---:|:---:|---|
-| GPIO 1 | SCK | SPI Clock (shared with TMC) |
-| GPIO 2 | MOSI | SPI Data (shared with TMC) |
-| GPIO 14 | CS | Display Chip Select |
-| GPIO 15 | DC | Data/Command |
-| GPIO 22 | RST | Display Reset |
-| GPIO 23 | BL | Backlight |
-
-### Touch (I2C)
-
-| ESP32-C6 Pin | Touch Pin | Function |
-|:---:|:---:|---|
-| GPIO 18 | SDA | I2C Data |
-| GPIO 19 | SCL | I2C Clock |
-| GPIO 20 | RST | Touch Reset |
-| GPIO 21 | INT | Touch Interrupt |
-
 ### Power
 
 | Connection | Details |
