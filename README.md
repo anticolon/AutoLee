@@ -2,7 +2,7 @@
 
 **Automated Lee APP (Automatic Primer Press) conversion — ESP32-C6 firmware with touchscreen UI and web control.**
 
-AutoLee converts a manual Lee Auto Prime press into a fully automated priming machine using a stepper motor, sensorless homing, and stallguard jam detection. It runs on a tiny 1.47" touchscreen ESP32-C6 module and can also be controlled from any phone/computer via its built-in web interface.
+AutoLee converts a manual Lee APP into a fully automated decapping machine using a stepper motor, sensorless homing, and stallguard jam detection. It runs on a tiny 1.47" touchscreen ESP32-C6 module and can also be controlled from any phone/computer via its built-in web interface.
 
 > **By K.L Design**
 
