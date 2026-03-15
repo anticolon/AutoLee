@@ -2192,7 +2192,7 @@ void setup() {
   lv_obj_t *b_cal    = make_btn(sc, "Calibrate",     140, 44, 0x444444, &lv_font_montserrat_20);
   lv_obj_t *b_config = make_btn(sc, "Config",        140, 44, 0x1F6FEB, &lv_font_montserrat_20);
   lv_obj_t *b_reset  = make_btn(sc, "Reset Count",   140, 44, 0xB42318, &lv_font_montserrat_20);
-  lv_obj_t *b_wifi   = make_btn(sc, "WiFi Info",     140, 44, 0x1F6FEB, &lv_font_montserrat_20);
+  lv_obj_t *b_wifi_reset = make_btn(sc, "Reset WiFi", 140, 44, 0xB42318, &lv_font_montserrat_20);
   lv_obj_t *b_back_s = make_btn(sn, "Back", 140, 44, 0x2A2A2A, &lv_font_montserrat_20);
   lv_obj_align(b_back_s, LV_ALIGN_CENTER, 0, 0);
 
@@ -2206,27 +2206,29 @@ void setup() {
   lv_obj_t *b_speed  = make_btn(cfgc, "Speed",      140, 44, 0x1F6FEB, &lv_font_montserrat_20);
   lv_obj_t *b_tuning = make_btn(cfgc, "Endpoints",  140, 44, 0x1F6FEB, &lv_font_montserrat_20);
   lv_obj_t *b_stall  = make_btn(cfgc, "Stall Guard",140, 44, 0x1F6FEB, &lv_font_montserrat_20);
+  lv_obj_t *b_wifi   = make_btn(cfgc, "WiFi Info",  140, 44, 0x1F6FEB, &lv_font_montserrat_20);
   lv_obj_t *b_back_cfg = make_btn(cfgn, "Back", 140, 44, 0x2A2A2A, &lv_font_montserrat_20);
   lv_obj_align(b_back_cfg, LV_ALIGN_CENTER, 0, 0);
 
   // Profile screen (replaces old Speed screen)
   profile_scr = lv_obj_create(NULL); style_screen(profile_scr);
   lv_obj_t *pc = make_content(profile_scr);
+  lv_obj_set_style_pad_row(pc, 6, LV_PART_MAIN);
   lv_obj_t *pn = make_nav(profile_scr);
   lv_obj_t *pt = make_title(pc, "Speed"); lv_obj_align(pt, LV_ALIGN_TOP_MID, 0, 2);
 
   // Info card showing current Hz + SG
-  lv_obj_t *pcard = make_card(pc, 150, 50);
+  lv_obj_t *pcard = make_card(pc, 150, 40);
   lbl_profile_info = lv_label_create(pcard);
   lv_obj_set_style_text_color(lbl_profile_info, lv_color_hex(0x00FF00), LV_PART_MAIN);
-  lv_obj_set_style_text_font(lbl_profile_info, &lv_font_montserrat_16, LV_PART_MAIN);
+  lv_obj_set_style_text_font(lbl_profile_info, &lv_font_montserrat_14, LV_PART_MAIN);
   lv_obj_center(lbl_profile_info);
 
   // Three profile buttons
   for (uint8_t i = 0; i < NUM_PROFILES; i++) {
     char label[32];
-    snprintf(label, sizeof(label), "%s\n%lukHz", profiles[i].name, (unsigned long)(profiles[i].speed_hz / 1000));
-    profile_btns[i] = make_btn_multiline(pc, label, 140, 48, 0x3A3A3A, &lv_font_montserrat_18);
+    snprintf(label, sizeof(label), "%s  %lukHz", profiles[i].name, (unsigned long)(profiles[i].speed_hz / 1000));
+    profile_btns[i] = make_btn(pc, label, 140, 40, 0x3A3A3A, &lv_font_montserrat_16);
     lv_obj_add_event_cb(profile_btns[i], [](lv_event_t *e) {
       uint8_t idx = (uint8_t)(intptr_t)lv_event_get_user_data(e);
       setActiveProfile(idx);
@@ -2287,7 +2289,8 @@ void setup() {
   lv_obj_set_style_text_font(lbl_wifi_status, &lv_font_montserrat_12, LV_PART_MAIN);
   lv_label_set_long_mode(lbl_wifi_status, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(lbl_wifi_status, 130);
-  lv_obj_align(lbl_wifi_status, LV_ALIGN_TOP_LEFT, 0, 0);
+  lv_obj_set_style_text_align(lbl_wifi_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_center(lbl_wifi_status);
   lv_obj_t *b_back_w = make_btn(wn, "Back", 140, 44, 0x2A2A2A, &lv_font_montserrat_20);
   lv_obj_align(b_back_w, LV_ALIGN_CENTER, 0, 0);
 
@@ -2481,12 +2484,19 @@ void setup() {
   lv_obj_add_event_cb(b_back_s, on_go_main, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_stall, [](lv_event_t *e){ LV_UNUSED(e); ui_update_sg_val(); go(stall_scr); }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_wifi, [](lv_event_t *e){ LV_UNUSED(e); ui_update_wifi_label(); go(wifi_scr); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(b_wifi_reset, [](lv_event_t *e){
+    LV_UNUSED(e);
+    clearWiFiCredentials();
+    webLog("WiFi credentials cleared, rebooting...");
+    rebootRequested = true;
+    rebootRequestMs = millis();
+  }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_back_cfg, [](lv_event_t *e){ LV_UNUSED(e); go(settings_scr); }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_back_p, [](lv_event_t *e){ LV_UNUSED(e); go(config_scr); }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(btn_eu, on_go_ep_up, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(btn_ed, on_go_ep_dn, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_back_t, [](lv_event_t *e){ LV_UNUSED(e); go(config_scr); }, LV_EVENT_CLICKED, nullptr);
-  lv_obj_add_event_cb(b_back_w, [](lv_event_t *e){ LV_UNUSED(e); go(settings_scr); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(b_back_w, [](lv_event_t *e){ LV_UNUSED(e); go(config_scr); }, LV_EVENT_CLICKED, nullptr);
 
   lv_timer_create(counter_timer_cb, 100, nullptr);
 
