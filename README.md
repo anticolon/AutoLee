@@ -68,7 +68,7 @@ The stall detection and jam protection features are designed to detect brass get
 - **Stall Guard screen** — adjust SG trip for the active profile with ±1/±5 buttons
 - **Batch Run screen** — set target count with ±1/10/100 buttons, start batch
 - **Jam screen** — warning display with one-button return home
-- **WiFi screen** — shows current IP or AP info
+- **WiFi screen** — shows connected SSID and IP address, or AP info
 
 ### Web Interface (5-page layout)
 - **Full control from any browser** — responsive dark-theme UI works on phone and desktop
