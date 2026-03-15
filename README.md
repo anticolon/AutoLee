@@ -2,7 +2,7 @@
 
 **Automated Lee APP conversion — ESP32-C6 firmware with touchscreen UI and web control.**
 
-AutoLee converts a manual Lee APP into a fully automated decapping machine using a stepper motor, sensorless homing, and stallguard jam detection. It runs on a tiny 1.47" touchscreen ESP32-C6 module and can also be controlled from any phone/computer via its built-in web interface.
+AutoLee converts a manual Lee APP into a fully automated priming machine using a stepper motor, sensorless homing, and stallguard jam detection. It runs on a tiny 1.47" touchscreen ESP32-C6 module and can also be controlled from any phone/computer via its built-in web interface.
 
 > **By K.L Design**
 
@@ -31,11 +31,16 @@ The stall detection and jam protection features are designed to detect brass get
 - **Fast ramp profile** — 800,000 steps/s² accel/decel (RUN_DECEL) for maximum cruise time and StallGuard coverage
 - **Safe return-home** — after a jam or stall, creeps back to UP stop using calibration speed with stall detection and retries
 
-### Speed Profiles (v1.5)
-- **Three preset profiles** — Slow (30 kHz), Normal (40 kHz), Fast (50 kHz)
+### Speed Profiles
+- **Three preset profiles** — Slow (15 kHz, SG=350), Normal (35 kHz, SG=15), Fast (45 kHz, SG=1)
 - **Per-profile StallGuard threshold** — each speed has its own SG trip value, eliminating false jams when changing speed
 - **One-tap switching** — change profile from the touchscreen or web UI; speed and SG update together instantly
-- **Fine-tune SG per profile** — adjust ±1/±5 from the touch Stall Sensitivity screen or per-profile web controls
+- **Fine-tune SG per profile** — type a value directly into text inputs on the web Configuration page, or use ±1/±5 buttons on the touch screen
+
+### Motor Current
+- **Adjustable run current** — 1,000–4,500 mA via web slider (default 2,500 mA)
+- **Overcurrent warning** — values above 4,000 mA show a warning (exceeds motor rating, ensure cooling)
+- **Live adjustment** — takes effect immediately, no restart needed
 
 ### Jam Detection & Protection
 - **Runtime StallGuard monitoring** — reads SG2 via median-of-5 filtered SPI during operation
@@ -55,26 +60,25 @@ The stall detection and jam protection features are designed to detect brass get
 - **Resettable** from touch UI or web interface
 
 ### Touch UI (172×320 LVGL)
-- **Main screen** — counter, active speed profile indicator, calibration warning, batch remaining
-- **Speed Profile screen** — three large buttons with green highlight on active, info card showing Hz + SG
-- **Tuning screen** — raw and effective endpoint values, buttons to edit UP and DOWN endpoints
-- **Stall Sensitivity screen** — adjust SG trip for the active profile with ±1/±5 buttons
+- **Main screen** — counter (centered), active speed profile indicator, calibration warning, batch remaining, buttons for Batch Run and Settings
+- **Settings screen** — Calibrate, Configuration, Reset Counter, WiFi Info
+- **Configuration screen** — Speed Profile, Endpoints, Stall Guard
+- **Speed Profile screen** — three buttons with green highlight on active, info card showing Hz + SG
+- **Endpoints (tuning) screen** — raw and effective endpoint values, buttons to edit UP and DOWN
+- **Stall Guard screen** — adjust SG trip for the active profile with ±1/±5 buttons
 - **Batch Run screen** — set target count with ±1/10/100 buttons, start batch
-- **Settings screen** — access to all sub-screens, calibrate button, reset counter, WiFi info
 - **Jam screen** — warning display with one-button return home
 - **WiFi screen** — shows current IP or AP info
 
-### Web Interface
+### Web Interface (5-page layout)
 - **Full control from any browser** — responsive dark-theme UI works on phone and desktop
 - **Real-time updates** — Server-Sent Events (SSE) push state changes at 250 ms intervals
-- **Speed profile selector** — three profile buttons with active highlight
-- **Per-profile SG controls** — independent ±1/±5 adjustment for each profile's StallGuard threshold
-- **Work zone adjustment** — ±100/±500 step controls for the SG blanking zone
-- **Endpoint tuning** — collapsible section with ±1/10/100 offset controls for UP and DOWN
-- **Batch run controls** — set target, start, clear
-- **Live log viewer** — 500-line scrollable log with real-time streaming
-- **OTA firmware update** — drag-and-drop .bin upload with progress bar
-- **WiFi configuration** — scan and select networks, save credentials, reset to AP mode
+- **Main page** — status, counter, RUN/STOP, calibrate, reset counter, speed profile selector, batch run controls
+- **Configuration page** — motor current slider (1,000–4,500 mA with overcurrent warning), endpoint tuning with collapsible offsets, per-profile StallGuard text inputs, work zone adjustment
+- **Log page** — full-height 500-line scrollable log with real-time streaming and clear button
+- **Firmware page** — drag-and-drop OTA .bin upload with progress bar
+- **WiFi page** — shows connection status, SSID, and IP address; change credentials, reset to AP mode
+- **Footer navigation** — blue text links on every page to jump between all five pages
 
 ### WiFi & Networking
 - **Auto-connect** — attempts saved credentials on boot, falls back to AP if it fails
@@ -176,7 +180,7 @@ The stall detection and jam protection features are designed to detect brass get
 
 After first flash, firmware can be updated two ways:
 
-- **Web UI** — open the AutoLee web interface, scroll to "Firmware Update", drag and drop a `.bin` file
+- **Web UI** — open the AutoLee web interface, go to the Firmware page, drag and drop a `.bin` file
 - **ArduinoOTA** — hostname `autolee`, password `autolee`
 
 ---
@@ -187,10 +191,12 @@ Key constants at the top of `AutoLee.ino`:
 
 | Constant | Default | Description |
 |---|---|---|
-| `profiles[0..2]` | 30k/40k/50k Hz | Speed profiles (Slow/Normal/Fast) with SG thresholds |
+| `profiles[0]` (Slow) | 15,000 Hz / SG 350 | Low speed, high SG threshold — max torque for tough primers |
+| `profiles[1]` (Normal) | 35,000 Hz / SG 15 | Balanced speed and sensitivity |
+| `profiles[2]` (Fast) | 45,000 Hz / SG 1 | High speed, very sensitive stall detection |
+| `RUN_CURRENT_MA` | 2,500 mA | Motor run current (adjustable 1,000–4,500 via web UI) |
 | `RUN_DECEL` | 800,000 | Accel/decel rate (steps/s²) |
-| `RUN_CURRENT_MA` | 2,500 | Motor run current (mA) |
-| `CAL_CURRENT_MA` | 3,200 | Calibration current (mA) |
+| `CAL_CURRENT_MA` | 3,200 | Calibration current (mA, fixed) |
 | `CAL_SPEED_HZ` | 8,000 | Calibration speed (Hz) |
 | `SG_WORK_ZONE_STEPS` | 5,500 | SG blanking zone near DOWN endpoint |
 | `DOWN_OFFSET_DEFAULT` | −500 | Default DOWN endpoint offset after calibration |
@@ -207,7 +213,8 @@ All endpoints accept `POST` requests.
 | `GET /api/state` | — | Returns full JSON state |
 | `/api/toggle_run` | — | Start or stop running |
 | `/api/profile` | `idx=0\|1\|2` | Switch speed profile |
-| `/api/sg_trip` | `delta=N` `&profile=N` (optional) | Adjust SG threshold; targets active profile by default |
+| `/api/sg_trip` | `value=N` or `delta=N`, `&profile=N` (optional) | Set or adjust SG threshold; targets active profile by default |
+| `/api/current` | `ma=N` | Set motor run current (1,000–4,500 mA) |
 | `/api/work_zone` | `delta=N` | Adjust work zone blanking steps |
 | `/api/endpoint` | `which=up\|down` `&delta=N` | Adjust endpoint offset |
 | `/api/batch` | `delta=N` or `action=start\|clear` | Adjust batch target or start/clear |
@@ -225,6 +232,7 @@ SSE stream available at `/events` — pushes JSON state every 250 ms and log lin
 
 | Version | Changes |
 |---|---|
+| **v1.6** | Adjustable motor current (1,000–4,500 mA) via web; multi-page web UI (Main, Configuration, Log, Firmware, WiFi); touch UI restructured (Settings → Configuration sub-menu); WiFi page shows SSID + IP; SG text inputs with auto-submit on blur; profiles retuned (Slow 15kHz/350, Normal 35kHz/15, Fast 45kHz/1); all labels fitted to 172px display |
 | **v1.5** | Speed profiles (Slow/Normal/Fast) replace speed slider; per-profile SG thresholds; profile API |
 | **v1.4** | Captive portal WiFi; work zone SG blanking; RUN_DECEL 800k; median-of-5 SPI filter; sliding counter stall detection; 500-line log; redesigned web UI |
 | **v1.3** | Batch run; jam screen with return-home; runtime StallGuard monitoring; web log viewer |
