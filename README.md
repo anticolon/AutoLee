@@ -98,7 +98,7 @@ The stall detection and jam protection features are designed to detect brass get
 |---|-----------|-------|------|
 | 1 | WaveShare 1.47" ESP32-C6 | Touchscreen controller & UI | [Amazon.se](https://www.amazon.se/dp/B0F8B845Y6) |
 | 2 | TMC5160T Plus | Silent stepper driver with StallGuard2 | [Amazon.se](https://www.amazon.se/-/en/dp/B0D5HQWW1C) |
-| 3 | Buck Converter | 24 V → 5 V | [Amazon.se](https://www.amazon.se/dp/B07DJ5HZ7G) |
+| 3 | Buck Converter | 24 V → 3.3 V | [Amazon.se](https://www.amazon.se/dp/B07DJ5HZ7G) |
 
 ### Mechanical
 
@@ -175,7 +175,7 @@ The stall detection and jam protection features are designed to detect brass get
 |---|---|
 | 24 V PSU → TMC5160 VM | Motor power (24 V) |
 | 24 V PSU → Buck converter IN | Feeds the buck converter |
-| Buck converter OUT (5 V) → ESP32-C6 | Logic power |
+| Buck converter OUT (3.3 V) → ESP32-C6 | Logic power |
 | 24 V PSU → Fan | Direct 24 V to cooling fan |
 | GND | Common ground between all boards |
 
