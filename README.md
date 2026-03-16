@@ -96,7 +96,7 @@ The stall detection and jam protection features are designed to detect brass get
 |---|-----------|-------|------|
 | 1 | WaveShare 1.47" ESP32-C6 | Touchscreen controller & UI | [Amazon.se](https://www.amazon.se/dp/B0F8B845Y6) |
 | 2 | TMC5160T Plus | Silent stepper driver with StallGuard2 | [Amazon.se](https://www.amazon.se/-/en/dp/B0D5HQWW1C) |
-| 3 | Buck Converter | 24 V → 5 V, ⚠️ verify physical dimensions | [Amazon.se](https://www.amazon.se/dp/B07DJ5HZ7G) |
+| 3 | Buck Converter | 24 V → 5 V | [Amazon.se](https://www.amazon.se/dp/B07DJ5HZ7G) |
 
 ### Mechanical
 
@@ -104,7 +104,7 @@ The stall detection and jam protection features are designed to detect brass get
 |---|-----------|-------|------|
 | 4 | NEMA 23 Stepper Motor | 2.4 Nm, 4.0 A, 57×57×82 mm, 8 mm shaft | [Amazon.se](https://www.amazon.se/-/en/dp/B091C37FJ2) |
 | 5 | Shaft Coupling | Motor-to-leadscrew (8 mm to 8 mm) | [Amazon.se](https://www.amazon.se/dp/B07CLLW7Z3) |
-| 6 | Ball Screw Kit SFU1605 250 mm | ⚠️ verify physical dimensions | [Amazon.de](https://www.amazon.de/dp/B08WRJRM22) |
+| 6 | Ball Screw Kit SFU1605 250 mm | 250mm SFU1605 BK12/BF12 | [Amazon.de](https://www.amazon.de/dp/B08WRJRM22) |
 
 ### Power
 
@@ -120,7 +120,6 @@ The stall detection and jam protection features are designed to detect brass get
 |---|-----------|-------|------|
 | 10 | Fan | 24 V, 40×40×20 mm | [Amazon.se](https://www.amazon.se/dp/B00MNJD8BE) |
 
-> **Note:** The buck converter and leadscrew dimensions have not been fully verified — double-check fitment before ordering.
 
 ---
 
