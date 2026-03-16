@@ -122,6 +122,34 @@ The stall detection and jam protection features are designed to detect brass get
 |---|-----------|-------|------|
 | 10 | Fan | 24 V, 40×40×20 mm | [Amazon.se](https://www.amazon.se/dp/B00MNJD8BE) |
 
+### Hardware (Fasteners & Inserts)
+
+#### Bolts / Screws
+
+| Qty | Size | Used For |
+|-----|------|----------|
+| 15 pcs | M4 x 16mm | Motor, Motor mount, Backplane upper, Backplane lower |
+| 11 pcs | M5 x 40mm | Ballscrew mounts, Sled clamp |
+| 4 pcs | M5 x 25mm | Sled mount |
+| 1 pcs | M4 x 20mm | Display mount |
+| 4 pcs | M3 x 30mm | 24V Fan |
+| 4 pcs | M3 x 5mm | TMC5160T |
+| 4 pcs | M2 x 5mm | Display |
+
+#### Lock Nuts
+
+| Qty | Size | Used For |
+|-----|------|----------|
+| 3 pcs | M5 Lock nut | Sled clamp |
+| 4 pcs | M3 Lock nut | 24V Fan |
+
+#### Heat Inserts
+
+| Qty | Size | Used For |
+|-----|------|----------|
+| 16 pcs | M4 Heat insert | Motor, Motor mount, Backplane upper, Backplane lower, Display mount |
+| 8 pcs | M5 Heat insert | Ballscrew mount |
+| 4 pcs | M3 Heat insert | TMC5160T mount |
 
 ---
 
