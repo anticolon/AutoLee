@@ -115,12 +115,13 @@ The stall detection and jam protection features are designed to detect brass get
 | 7 | Power Supply | 24 V, 5 A DC | [Amazon.se](https://www.amazon.se/dp/B0CNPMCP6F) |
 | 8 | On/Off Switch | Panel mount | [Amazon.se](https://www.amazon.se/dp/B07GDCNXKP) |
 | 9 | DC Power Jack | 2.5 mm socket | [Amazon.se](https://www.amazon.se/dp/B081CM1G4M) |
+| 10 | Emergency Stop | Button | [Amazon.se](https://www.amazon.se/dp/B0FFMTCFLK) |
 
 ### Cooling
 
 | # | Component | Specs | Link |
 |---|-----------|-------|------|
-| 10 | Fan | 24 V, 40×40×20 mm | [Amazon.se](https://www.amazon.se/dp/B00MNJD8BE) |
+| 11 | Fan | 24 V, 40×40×20 mm | [Amazon.se](https://www.amazon.se/dp/B00MNJD8BE) |
 
 ### Hardware (Fasteners & Inserts)
 
