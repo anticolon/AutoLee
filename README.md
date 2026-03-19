@@ -286,4 +286,12 @@ SSE stream available at `/events` — pushes JSON state every 250 ms and log lin
 
 ## License
 
-This project is provided as-is for personal and hobby use. See the source code for details.
+This project is licensed under the [Creative Commons Attribution-NonCommercial 4.0 International License](https://creativecommons.org/licenses/by-nc/4.0/).
+
+You are free to use, modify, and share this work for personal, non-commercial purposes, provided you give appropriate credit. Commercial use is not permitted without prior written permission.
+
+Commercial use — including selling devices, kits, or services based on this project — is prohibited without prior written permission from the author.
+
+THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. USE AT YOUR OWN RISK.
+
+Copyright (c) 2025 K.L Design
