@@ -106,7 +106,7 @@ The stall detection and jam protection features are designed to detect brass get
 |---|-----------|-------|------|
 | 4 | NEMA 23 Stepper Motor | 2.4 Nm, 4.0 A, 57×57×82 mm, 8 mm shaft | [Amazon.se](https://www.amazon.se/-/en/dp/B091C37FJ2) |
 | 5 | Shaft Coupling | Motor-to-leadscrew (8 mm to 10 mm) | [Amazon.se](https://www.amazon.se/dp/B07CLLW7Z3) |
-| 6 | Ball Screw Kit SFU1605 250 mm | 250mm SFU1605 BK12/BF12 10mm Shaft | [Amazon.de](https://www.amazon.de/dp/B08WRJRM22) |
+| 6 | Ball Screw Kit SFU1605 250 mm | 250mm SFU1605 BK12/BF12 10 mm Shaft | [Amazon.de](https://www.amazon.de/dp/B08WRJRM22) |
 
 ### Power
 
@@ -135,6 +135,7 @@ The stall detection and jam protection features are designed to detect brass get
 | 1 pcs | M4 x 20mm | Display mount |
 | 4 pcs | M3 x 30mm | 24V Fan |
 | 4 pcs | M3 x 5mm | TMC5160T |
+| 1 pcs | M3 x 10mm | Driverhousing mounting to backplane|
 | 4 pcs | M2 x 5mm | Display |
 
 #### Lock Nuts
@@ -150,7 +151,7 @@ The stall detection and jam protection features are designed to detect brass get
 |-----|------|----------|
 | 16 pcs | M4 Heat insert | Motor, Motor mount, Backplane upper, Backplane lower, Display mount |
 | 8 pcs | M5 Heat insert | Ballscrew mount |
-| 4 pcs | M3 Heat insert | TMC5160T mount |
+| 5 pcs | M3 Heat insert | TMC5160T mount, Driverhousing to backplane |
 
 ---
 
