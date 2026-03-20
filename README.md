@@ -36,7 +36,7 @@ The stall detection and jam protection features are designed to detect brass get
 - **Safe return-home** — after a jam or stall, creeps back to UP stop using calibration speed with stall detection and retries
 
 ### Speed Profiles
-- **Three preset profiles** — Slow (15 kHz, SG=350), Normal (35 kHz, SG=15), Fast (45 kHz, SG=1)
+- **Three preset profiles** — Slow (15 kHz, SG=375), Normal (35 kHz, SG=15), Fast (45 kHz, SG=1)
 - **Per-profile StallGuard threshold** — each speed has its own SG trip value, eliminating false jams when changing speed
 - **One-tap switching** — change profile from the touchscreen or web UI; speed and SG update together instantly
 - **Fine-tune SG per profile** — type a value directly into text inputs on the web Configuration page, or use ±1/±5 buttons on the touch screen
@@ -234,7 +234,7 @@ Key constants at the top of `AutoLee.ino`:
 
 | Constant | Default | Description |
 |---|---|---|
-| `profiles[0]` (Slow) | 15,000 Hz / SG 350 | Low speed, high SG threshold — max torque for tough primers |
+| `profiles[0]` (Slow) | 15,000 Hz / SG 375 | Low speed, high SG threshold — max torque for tough primers |
 | `profiles[1]` (Normal) | 35,000 Hz / SG 15 | Balanced speed and sensitivity |
 | `profiles[2]` (Fast) | 45,000 Hz / SG 1 | High speed, very sensitive stall detection |
 | `RUN_CURRENT_MA` | 3,500 mA | Motor run current (adjustable 1,000–4,500 via web UI) |
@@ -276,7 +276,7 @@ SSE stream available at `/events` — pushes JSON state every 250 ms and log lin
 | Version | Changes |
 |---|---|
 | **v1.7** | WiFi Info moved to Configuration sub-menu; Reset WiFi button on WiFi info screen; speed profile buttons resized to fit display; WiFi info centered in card |
-| **v1.6** | Adjustable motor current (1,000–4,500 mA) via web; multi-page web UI (Main, Configuration, Log, Firmware, WiFi); touch UI restructured (Settings → Configuration sub-menu); WiFi page shows SSID + IP; SG text inputs with auto-submit on blur; profiles retuned (Slow 15kHz/350, Normal 35kHz/15, Fast 45kHz/1); all labels fitted to 172px display |
+| **v1.6** | Adjustable motor current (1,000–4,500 mA) via web; multi-page web UI (Main, Configuration, Log, Firmware, WiFi); touch UI restructured (Settings → Configuration sub-menu); WiFi page shows SSID + IP; SG text inputs with auto-submit on blur; profiles retuned (Slow 15kHz/375, Normal 35kHz/15, Fast 45kHz/1); all labels fitted to 172px display |
 | **v1.5** | Speed profiles (Slow/Normal/Fast) replace speed slider; per-profile SG thresholds; profile API |
 | **v1.4** | Captive portal WiFi; work zone SG blanking; RUN_DECEL 800k; median-of-5 SPI filter; sliding counter stall detection; 500-line log; redesigned web UI |
 | **v1.3** | Batch run; jam screen with return-home; runtime StallGuard monitoring; web log viewer |
