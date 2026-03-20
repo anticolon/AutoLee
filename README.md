@@ -151,11 +151,13 @@ The stall detection and jam protection features are designed to detect brass get
 
 #### Heat Inserts
 
-| Qty | Size | Used For |
-|-----|------|----------|
-| 16 pcs | M4 Heat insert | Motor, Motor mount, Backplane upper, Backplane lower, Display mount |
-| 8 pcs | M5 Heat insert | Ballscrew mount |
-| 5 pcs | M3 Heat insert | TMC5160T mount, Driverhousing to backplane |
+| Qty | Size | Used For | Link |
+|-----|------|----------|------|
+| 16 pcs | M4 Heat insert | Motor, Motor mount, Backplane upper, Backplane lower, Display mount | [Amazon.se](https://www.amazon.se/dp/B09MTTC7S9?tag=kldesign-21) · [Amazon.com](https://www.amazon.com/dp/B0FCXXW62N?tag=kldesign00-20) ¹ |
+| 8 pcs | M5 Heat insert | Ballscrew mount | [Amazon.se](https://www.amazon.se/dp/B07YSVXWS8?tag=kldesign-21) · [Amazon.com](https://www.amazon.com/dp/B0FCXXW62N?tag=kldesign00-20) ¹ |
+| 5 pcs | M3 Heat insert | TMC5160T mount, Driverhousing to backplane | [Amazon.se](https://www.amazon.se/dp/B08BCRZZS3?tag=kldesign-21) · [Amazon.com](https://www.amazon.com/dp/B0FCXXW62N?tag=kldesign00-20) ¹ |
+
+> ¹ The US link is a bundle kit that includes M3, M4, and M5 inserts.
 
 ---
 
