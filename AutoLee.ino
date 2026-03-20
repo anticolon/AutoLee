@@ -49,7 +49,7 @@ struct SpeedProfile {
 
 static constexpr uint8_t NUM_PROFILES = 3;
 static SpeedProfile profiles[NUM_PROFILES] = {
-  { "Slow",   15000, 350, 350 },
+  { "Slow",   15000, 375, 375 },
   { "Normal", 35000, 15, 15 },
   { "Fast",   45000, 1, 1 },
 };
