@@ -36,7 +36,7 @@ The stall detection and jam protection features are designed to detect brass get
 - **Safe return-home** — after a jam or stall, creeps back to UP stop using calibration speed with stall detection and retries
 
 ### Speed Profiles
-- **Three preset profiles** — Slow (15 kHz, SG=375), Normal (35 kHz, SG=15), Fast (45 kHz, SG=1)
+- **Three preset profiles** — Slow (15 kHz, SG=350), Normal (35 kHz, SG=15), Fast (45 kHz, SG=1)
 - **Per-profile StallGuard threshold** — each speed has its own SG trip value, eliminating false jams when changing speed
 - **One-tap switching** — change profile from the touchscreen or web UI; speed and SG update together instantly
 - **Fine-tune SG per profile** — type a value directly into text inputs on the web Configuration page, or use ±1/±5 buttons on the touch screen
@@ -89,6 +89,24 @@ The stall detection and jam protection features are designed to detect brass get
 - **Captive portal** — open AP mode (`AutoLee-Setup`, no password) with DNS redirect so any device gets the setup page automatically
 - **Network scanner** — scans available WiFi networks and presents them in a dropdown
 - **ArduinoOTA support** — update firmware from PlatformIO/Arduino IDE over the network (hostname: `autolee`, password: `autolee`)
+
+---
+
+## File Structure
+
+As of v1.8, the firmware is split into modular files for maintainability. All files must be in the same sketch folder.
+
+| File | Purpose |
+|---|---|
+| `AutoLee.ino` | Main entry point — globals, `setup()`, `loop()`, include order |
+| `config.h` | All tuning constants, pin definitions, speed profiles |
+| `motion.h` | Motion control, stall detection, calibration, creep home |
+| `ui_touch.h` | LVGL touch UI — screen builders, helpers, event handlers |
+| `web_server.h` | Web server, API endpoints, SSE broadcast, HTML, OTA upload |
+| `wifi_ota.h` | WiFi connection, captive portal, ArduinoOTA |
+| `globals.h` | Reference document — lists all shared variables and forward declarations (not included in the build) |
+
+The Arduino IDE compiles everything as a single translation unit. Include order in `AutoLee.ino` resolves all dependencies: `config.h` → globals → `motion.h` → `ui_touch.h` → `wifi_ota.h` → `web_server.h`.
 
 ---
 
@@ -218,7 +236,7 @@ The stall detection and jam protection features are designed to detect brass get
 4. Set up LVGL:
    - Copy `lv_conf.h` from this repo to sit **next to** your `lvgl` library folder (not inside it)
    - Copy the `demos` folder from inside the LVGL library into its `src` folder
-5. Open `AutoLee.ino` in Arduino IDE or PlatformIO
+5. Open `AutoLee.ino` in Arduino IDE or PlatformIO — all `.h` files must be in the same folder as the `.ino`
 6. Select board: **ESP32-C6**
 7. Set partition scheme: **Minimal SPIFFS (1.9 MB APP with OTA/190 KB SPIFFS)** — the firmware is too large for the default partition layout
 8. Compile and flash
@@ -234,11 +252,11 @@ After first flash, firmware can be updated two ways:
 
 ## Configuration
 
-Key constants at the top of `AutoLee.ino`:
+Key constants are in `config.h`:
 
 | Constant | Default | Description |
 |---|---|---|
-| `profiles[0]` (Slow) | 15,000 Hz / SG 375 | Low speed, high SG threshold — max torque for tough primers |
+| `profiles[0]` (Slow) | 15,000 Hz / SG 350 | Low speed, high SG threshold — max torque for tough primers |
 | `profiles[1]` (Normal) | 35,000 Hz / SG 15 | Balanced speed and sensitivity |
 | `profiles[2]` (Fast) | 45,000 Hz / SG 1 | High speed, very sensitive stall detection |
 | `RUN_CURRENT_MA` | 3,500 mA | Motor run current (adjustable 1,000–4,500 via web UI) |
@@ -279,8 +297,9 @@ SSE stream available at `/events` — pushes JSON state every 250 ms and log lin
 
 | Version | Changes |
 |---|---|
+| **v1.8** | Firmware split into modular files (`config.h`, `motion.h`, `ui_touch.h`, `web_server.h`, `wifi_ota.h`) for maintainability — no functional changes from v1.7 |
 | **v1.7** | WiFi Info moved to Configuration sub-menu; Reset WiFi button on WiFi info screen; speed profile buttons resized to fit display; WiFi info centered in card |
-| **v1.6** | Adjustable motor current (1,000–4,500 mA) via web; multi-page web UI (Main, Configuration, Log, Firmware, WiFi); touch UI restructured (Settings → Configuration sub-menu); WiFi page shows SSID + IP; SG text inputs with auto-submit on blur; profiles retuned (Slow 15kHz/375, Normal 35kHz/15, Fast 45kHz/1); all labels fitted to 172px display |
+| **v1.6** | Adjustable motor current (1,000–4,500 mA) via web; multi-page web UI (Main, Configuration, Log, Firmware, WiFi); touch UI restructured (Settings → Configuration sub-menu); WiFi page shows SSID + IP; SG text inputs with auto-submit on blur; profiles retuned (Slow 15kHz/350, Normal 35kHz/15, Fast 45kHz/1); all labels fitted to 172px display |
 | **v1.5** | Speed profiles (Slow/Normal/Fast) replace speed slider; per-profile SG thresholds; profile API |
 | **v1.4** | Captive portal WiFi; work zone SG blanking; RUN_DECEL 800k; median-of-5 SPI filter; sliding counter stall detection; 500-line log; redesigned web UI |
 | **v1.3** | Batch run; jam screen with return-home; runtime StallGuard monitoring; web log viewer |
