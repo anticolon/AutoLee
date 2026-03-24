@@ -64,15 +64,15 @@ The stall detection and jam protection features are designed to detect brass get
 - **Resettable** from touch UI or web interface
 
 ### Touch UI (172×320 LVGL)
-- **Main screen** — counter (centered), active speed profile indicator, calibration warning, batch remaining, buttons for Batch Run and Settings
+- **Main screen** — Counter, active speed profile indicator, calibration warning, batch remaining, buttons for Batch Run and Settings
 - **Settings screen** — Calibrate, Configuration, Reset Counter
 - **Configuration screen** — Speed Profile, Endpoints, Stall Guard, WiFi Info
-- **Speed Profile screen** — three buttons with green highlight on active, info card showing Hz + SG
-- **Endpoints (tuning) screen** — raw and effective endpoint values, buttons to edit UP and DOWN
-- **Stall Guard screen** — adjust SG trip for the active profile with ±1/±5 buttons
-- **Batch Run screen** — set target count with ±1/10/100 buttons, start batch
-- **Jam screen** — warning display with one-button return home
-- **WiFi screen** — shows connected SSID and IP address (centered), Reset WiFi button to clear credentials and reboot
+- **Speed Profile screen** — Three buttons with green highlight on active, info card showing Hz + SG
+- **Endpoints (tuning) screen** — Raw and effective endpoint values, buttons to edit UP and DOWN
+- **Stall Guard screen** — Adjust SG trip for the active profile with ±1/±5 buttons
+- **Batch Run screen** — Set target count with ±1/10/100 buttons, start batch
+- **Jam screen** — Warning display with one-button return home
+- **WiFi screen** — Shows connected SSID and IP address, Reset WiFi button to clear credentials and reboot
 
 ### Web Interface (5-page layout)
 - **Full control from any browser** — responsive dark-theme UI works on phone and desktop
@@ -120,7 +120,7 @@ The Arduino IDE compiles everything as a single translation unit. Include order 
 |---|-----------|-------|------|
 | 1 | WaveShare 1.47" ESP32-C6 | Touchscreen controller & UI | [Amazon.se](https://www.amazon.se/dp/B0F8B845Y6?tag=kldesign-21) · [Amazon.com](https://www.amazon.com/dp/B0FC5SNKH4?tag=kldesign00-20) |
 | 2 | TMC5160T Plus | Silent stepper driver with StallGuard2 | [Amazon.se](https://www.amazon.se/dp/B0D5HQWW1C?tag=kldesign-21) · [Amazon.com](https://www.amazon.com/dp/B0CHFK7VBL?tag=kldesign00-20) |
-| 3 | Buck Converter | 24 V → 3.3 V | [Amazon.se](https://www.amazon.se/dp/B07DJ5HZ7G?tag=kldesign-21) · [Amazon.com](https://www.amazon.com/dp/B0DC3N7PMY?tag=kldesign00-20) |
+| 3 | Buck Converter | 24 V → 5 V | [Amazon.se](https://www.amazon.se/dp/B07DJ5HZ7G?tag=kldesign-21) · [Amazon.com](https://www.amazon.com/dp/B0DC3N7PMY?tag=kldesign00-20) |
 
 ### Mechanical
 
@@ -158,6 +158,7 @@ The Arduino IDE compiles everything as a single translation unit. Include order 
 | 4 pcs | M3 x 30mm | 24V Fan |
 | 4 pcs | M3 x 5mm | TMC5160T |
 | 1 pcs | M3 x 10mm | Driverhousing mounting to backplane|
+| 2 pcs | M3 x 10mm | Driverhousinglid|
 | 4 pcs | M2 x 5mm | Display |
 
 #### Lock Nuts
@@ -200,7 +201,7 @@ The Arduino IDE compiles everything as a single translation unit. Include order 
 |---|---|
 | 24 V PSU → TMC5160 VM | Motor power (24 V) |
 | 24 V PSU → Buck converter IN | Feeds the buck converter |
-| Buck converter OUT (3.3 V) → ESP32-C6 | Logic power |
+| Buck converter OUT (5 V) → ESP32-C6 | Logic power |
 | 24 V PSU → Fan | Direct 24 V to cooling fan |
 | GND | Common ground between all boards |
 
