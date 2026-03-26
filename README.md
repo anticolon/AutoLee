@@ -145,6 +145,15 @@ The Arduino IDE compiles everything as a single translation unit. Include order 
 |---|-----------|-------|------|
 | 11 | Fan | 24 V, 40×40×20 mm | [Amazon.se](https://www.amazon.se/dp/B00MNJD8BE?tag=kldesign-21) · [Amazon.com](https://www.amazon.com/dp/B07B66DJYX?tag=kldesign00-20) |
 
+### Wiring Supplies
+
+| # | Component | Specs | Link |
+|---|-----------|-------|------|
+| 12 | Silicone Wire | 18 AWG, 24 V power wiring (PSU → driver) | [Amazon.com](https://www.amazon.com/Silicone-Electrical-Conductor-Parallel-Flexible/dp/B07FMRDP87?tag=kldesign00-20) |
+| 13 | Silicone Wire | 24 AWG, flexible stranded, signal wiring | [Amazon.com](https://www.amazon.com/TUOFENG-Wire-Stranded-Flexible-Silicone-Different/dp/B07G2BWBX8?tag=kldesign00-20) |
+| 14 | Dupont Connector Kit + Crimping Tool | 2.54 mm connectors, housings, and ratcheting crimper | [Amazon.com](https://www.amazon.com/Crimping-Connector-Assortment-Ratcheting-0-25-1-5mm%C2%B2/dp/B0FJ8LCZ9W?tag=kldesign00-20) |
+| 15 | Ferrule Connector Kit + Crimping Tool | For power and motor wires to TMC5160 terminal block | [Amazon.com](https://www.amazon.com/Preciva-Hexagonal-Self-adjustable-Terminals-Connectors/dp/B0D3D65VZT?tag=kldesign00-20) |
+
 ### Hardware (Fasteners & Inserts)
 
 #### Bolts / Screws
