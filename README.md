@@ -105,6 +105,7 @@ As of v1.8, the firmware is split into modular files for maintainability. All fi
 | `web_server.h` | Web server, API endpoints, SSE broadcast, HTML, OTA upload |
 | `wifi_ota.h` | WiFi connection, captive portal, ArduinoOTA |
 | `globals.h` | Reference document — lists all shared variables and forward declarations (not included in the build) |
+| `lv_conf.h` | LVGL configuration — display size, enabled features, font selections |
 
 The Arduino IDE compiles everything as a single translation unit. Include order in `AutoLee.ino` resolves all dependencies: `config.h` → globals → `motion.h` → `ui_touch.h` → `wifi_ota.h` → `web_server.h`.
 
