@@ -242,13 +242,39 @@ The Arduino IDE compiles everything as a single translation unit. Include order 
 7. Set partition scheme: **Minimal SPIFFS (1.9 MB APP with OTA/190 KB SPIFFS)** — the firmware is too large for the default partition layout
 8. Compile and flash
 
+## Flash Pre-Compiled Binary (No Arduino IDE Required)
+ 
+If you don't want to set up the Arduino IDE and compile the firmware yourself, you can flash a pre-built binary directly to the ESP32-C6 using a web browser.
+ 
+### What You Need
+ 
+- A **Chrome** or **Edge** browser (Web Serial is not supported in Firefox or Safari)
+- A **USB-C cable** connected to the Waveshare ESP32-C6 board
+- The merged firmware `.bin` file from the [`/firmware`](firmware/) folder in this repo
+ 
+### Steps
+ 
+1. Download the latest `AutoLee_vX.X_merged.bin` from the [`/firmware`](firmware/) folder
+2. Open the [**Espressif Web Flasher**](https://espressif.github.io/esptool-js/) in Chrome or Edge
+3. Click **Connect** and select the COM/serial port for your ESP32-C6
+4. In the **Program** section, enter **`0x0`** in the Flash Address field
+5. Click the file picker next to the address and select the downloaded `.bin` file
+6. Leave Flash Mode as **dio** and Flash Size as **detect**
+7. Click **Program**
+8. Wait for flashing to complete — progress will show in the Console section at the bottom
+
+**Tip:** If the board doesn't show up as a COM port, hold the **BOOT** button on the Waveshare board while plugging in USB, then release after connecting. You may also need to install the [CH343 USB driver](https://www.wch-ic.com/downloads/CH343SER_ZIP.html) if your OS doesn't recognize the board.
+
+### Updating Firmware Later
+ 
+Once AutoLee is on your WiFi, go to the web UI → **Firmware** page and drag-and-drop the **app-only** `.bin` file (not the merged binary). The merged binary is only needed for the initial USB flash.
+
 ### OTA Updates
 
 After first flash, firmware can be updated two ways:
 
 - **Web UI** — open the AutoLee web interface, go to the Firmware page, drag and drop a `.bin` file
 - **ArduinoOTA** — hostname `autolee`, password `autolee`
-
 ---
 
 ## Configuration
