@@ -266,12 +266,14 @@ If you don't want to set up the Arduino IDE and compile the firmware yourself, y
  
 1. Download the latest `AutoLee_vX.X_merged.bin` from the [`/Firmware`](Firmware/) folder
 2. Open the [**Espressif Web Flasher**](https://espressif.github.io/esptool-js/) in Chrome or Edge
-3. Click **Connect** and select the COM/serial port for your ESP32-C6
+3. Click **Connect** and select the port for your ESP32-C6
 4. In the **Program** section, enter **`0x0`** in the Flash Address field
 5. Click the file picker next to the address and select the downloaded `.bin` file
-6. Leave Flash Mode as **dio** and Flash Size as **detect**
+6. Set Flash Mode as **dio** and Flash Size as **4MB**
 7. Click **Program**
 8. Wait for flashing to complete — progress will show in the Console section at the bottom
+9. After programming is complete click the **rst** button on the esp32 board to reboot
+10. System should now be online
 
 **Tip:** If the board doesn't show up as a COM port, hold the **BOOT** button on the Waveshare board while plugging in USB, then release after connecting. You may also need to install the [CH343 USB driver](https://www.wch-ic.com/downloads/CH343SER_ZIP.html) if your OS doesn't recognize the board.
 
