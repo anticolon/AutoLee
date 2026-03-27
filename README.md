@@ -7,6 +7,7 @@
 AutoLee converts a manual Lee APP into a fully automated decapping machine using a stepper motor, sensorless homing, and stallguard jam detection. It runs on a tiny 1.47" touchscreen ESP32-C6 module and can also be controlled from any phone/computer via its built-in web interface.
 
 Find the 3D-printable parts here: https://makerworld.com/en/models/2529369-autolee-conversion-kit
+
 Support my work: https://buymeacoffee.com/kl.design
 
 > **By K.L Design**
