@@ -1,3 +1,5 @@
+
+
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
 
 # AutoLee
@@ -106,7 +108,7 @@ As of v1.8, the firmware is split into modular files for maintainability. All fi
 | `ui_touch.h` | LVGL touch UI — screen builders, helpers, event handlers |
 | `web_server.h` | Web server, API endpoints, SSE broadcast, HTML, OTA upload |
 | `wifi_ota.h` | WiFi connection, captive portal, ArduinoOTA |
-| `globals.h` | Reference document — lists all shared variables and forward declarations (not included in the build) |
+| `globals.h` | Reference document — lists all shared variables and forward declarations (included in the build) |
 | `lv_conf.h` | LVGL configuration — display size, enabled features, font selections |
 
 The Arduino IDE compiles everything as a single translation unit. Include order in `AutoLee.ino` resolves all dependencies: `config.h` → globals → `motion.h` → `ui_touch.h` → `wifi_ota.h` → `web_server.h`.
