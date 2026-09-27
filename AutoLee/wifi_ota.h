@@ -1,6 +1,6 @@
 // ============================================================================
 //  AutoLee – wifi_ota.h
-//  WiFi connection management, captive portal, ArduinoOTA
+//  WiFi connection management, supervision, captive portal, ArduinoOTA
 // ============================================================================
 #pragma once
 
@@ -10,6 +10,8 @@
 
 // ==========================================================================
 //  WiFi CREDENTIALS
+//  NVS access is slow; these are only ever called from loop() context
+//  (the web handlers defer via webWifiSaveRequested / webWifiClearRequested).
 // ==========================================================================
 void loadWiFiCredentials() {
   prefs.begin("autolee", true);
@@ -47,6 +49,7 @@ static void scanNetworks() {
     String ssid = WiFi.SSID(i);
     int rssi = WiFi.RSSI(i);
     String sec = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "OPEN" : "SEC";
+    ssid.replace("&", "&amp;");  // must be escaped first
     ssid.replace("\"", "&quot;"); ssid.replace("'", "&#39;");
     ssid.replace("<", "&lt;");    ssid.replace(">", "&gt;");
     scannedOptionsHTML += "<option value=\"" + ssid + "\">" + ssid +
@@ -62,6 +65,7 @@ static bool connectToWiFi(const char *ssid, const char *pass, uint32_t timeoutMs
   WiFi.mode(WIFI_STA);
   WiFi.disconnect(true, true);
   delay(200);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(ssid, pass);
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && (millis() - start) < timeoutMs) {
@@ -99,19 +103,134 @@ void startWiFi() {
 }
 
 // ==========================================================================
+//  SERVICES (web server + OTA listener)
+//  Registration happens once in setup(); only the listening sockets are
+//  started and stopped here, so handlers are never registered twice.
+// ==========================================================================
+void wifiStartServices() {
+  if (wifiServicesRunning) return;
+  webServer.begin();
+  ArduinoOTA.begin();
+  wifiServicesRunning = true;
+  Serial.println("Web server + OTA started on port 80");
+}
+
+void wifiStopServices() {
+  if (!wifiServicesRunning) return;
+  events.close();       // drop SSE clients before the socket goes away
+  webServer.end();
+  ArduinoOTA.end();
+  wifiServicesRunning = false;
+  Serial.println("Web server + OTA stopped");
+}
+
+static void wifiPowerOff() {
+  if (captivePortalRunning) {
+    dnsServer.stop();
+    captivePortalRunning = false;
+  }
+  WiFi.softAPdisconnect(true);
+  WiFi.disconnect(true, false);   // drop the connection, keep credentials
+  WiFi.mode(WIFI_OFF);
+  wifiConnected = false;
+  wifiAPMode    = false;
+}
+
+// Master WiFi switch. Always called from loop() context (the touch button and
+// the web endpoint both defer via wifiEnableRequested).
+//
+// Enabling reboots on purpose. Bringing the radio and the listening sockets
+// back up in place does NOT work: ESPAsyncWebServer's listener does not
+// reliably re-bind once its socket has been closed and the interface taken
+// down — WiFi reconnects and reports the correct IP, but nothing answers on
+// port 80 until the next power cycle. A reboot takes ~2 s and is always
+// clean. Disabling needs no reboot and stays immediate.
+void setWifiEnabled(bool en) {
+  if (en == wifiEnabled) return;
+  wifiEnabled = en;
+
+  if (en) {
+    Serial.println("WiFi: enabling — rebooting to bring services up cleanly");
+    if (lbl_wifi_status) {
+      lv_label_set_text(lbl_wifi_status, "Enabling WiFi...\nrebooting");
+      lv_refr_now(NULL);
+    }
+    saveSettings();            // persist the switch before we restart
+    rebootRequestMs = millis();   // before the flag: loop() reads both
+    rebootRequested = true;
+    return;
+  }
+
+  markSettingsDirty();
+  webLog("WiFi disabled");
+  wifiStopServices();
+  wifiPowerOff();
+  ui_update_wifi_label();
+}
+
+// ==========================================================================
+//  WiFi SUPERVISION — called from loop()
+//  v1.10 latched wifiConnected at boot, so the screen and /api/state kept
+//  advertising a stale SSID/IP forever after the AP dropped.
+// ==========================================================================
+static uint32_t wifiCheckMs = 0;
+static uint32_t wifiRetryMs = 0;
+
+void handleWiFi() {
+  if (!wifiEnabled) return;           // radio is off
+  if (wifiAPMode) return;             // captive portal: nothing to supervise
+  if (wifiSSID.length() == 0) return; // never configured
+
+  uint32_t now = millis();
+  if ((now - wifiCheckMs) < WIFI_CHECK_MS) return;
+  wifiCheckMs = now;
+
+  bool up = (WiFi.status() == WL_CONNECTED);
+  if (up != wifiConnected) {
+    wifiConnected = up;
+    if (up) {
+      webLog("WiFi: reconnected, IP=%s", WiFi.localIP().toString().c_str());
+      wifiRetryMs = now;
+    } else {
+      webLog("WiFi: connection lost");
+    }
+    ui_update_wifi_label();
+  }
+
+  // Nudge the supplicant if auto-reconnect hasn't recovered on its own.
+  if (!up && (now - wifiRetryMs) > WIFI_RETRY_MS) {
+    wifiRetryMs = now;
+    webLog("WiFi: retrying '%s'", wifiSSID.c_str());
+    WiFi.reconnect();
+  }
+}
+
+// ==========================================================================
 //  ArduinoOTA (for PlatformIO/Arduino IDE OTA)
 // ==========================================================================
 void setupArduinoOTA() {
   ArduinoOTA.setHostname("autolee");
   ArduinoOTA.setPassword("autolee");
   ArduinoOTA.onStart([]() {
-    if (runState == RUNNING) requestGracefulStop();
     Serial.println("OTA: start");
+    // onStart runs in loop() context, so we can actually wait for the ram to
+    // park before the flash is erased instead of rebooting mid-stroke.
+    batchActive = false;
+    if (runState == RUNNING) requestGracefulStop();
+    uint32_t t0 = millis();
+    while (stepper && stepper->isRunning() && (millis() - t0) < 4000) {
+      handleMotion();
+      delay(1);
+    }
+    if (stepper && stepper->isRunning()) stepper->forceStop();
+    runState = IDLE;
+    if (settingsDirty) saveSettings();
   });
   ArduinoOTA.onEnd([]() { Serial.println("OTA: done"); });
   ArduinoOTA.onProgress([](unsigned int p, unsigned int t) {
-    Serial.printf("OTA: %u%%", p / (t / 100));
+    if (t > 0) Serial.printf("OTA: %u%%", (unsigned)((uint64_t)p * 100 / t));
   });
   ArduinoOTA.onError([](ota_error_t e) { Serial.printf("OTA err: %u", e); });
-  ArduinoOTA.begin();
+  // ArduinoOTA.begin() is deliberately NOT called here — the listener is
+  // started and stopped by wifiStartServices()/wifiStopServices().
 }

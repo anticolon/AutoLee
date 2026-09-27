@@ -176,8 +176,15 @@ static void showJamScreen() {
 
 static void onJamReturnHome(lv_event_t *e) {
   LV_UNUSED(e);
-  if (runState != STALLED) return;
-  safeCreepHome();
+  if (runState != STALLED || homeRequested) return;
+  // Do NOT call safeCreepHome() from here. This handler runs nested inside
+  // lv_timer_handler(), where LVGL's re-entrancy guard turns the nested
+  // lv_timer_handler() calls in the homing loop into no-ops (so the screen
+  // freezes), and it would block the whole loop() for the duration.
+  // Defer to handleHomeRequest() in loop() instead.
+  homeRequested = true;
+  if (jam_status_lbl) lv_label_set_text(jam_status_lbl, "Returning home...");
+  lv_refr_now(NULL);
 }
 
 // ==========================================================================
@@ -185,13 +192,24 @@ static void onJamReturnHome(lv_event_t *e) {
 // ==========================================================================
 void ui_update_main_warning() {
   if (!main_warn) return;
-  if (endpointsCalibrated) lv_obj_add_flag(main_warn, LV_OBJ_FLAG_HIDDEN);
-  else lv_obj_clear_flag(main_warn, LV_OBJ_FLAG_HIDDEN);
+  if (!endpointsCalibrated) {
+    if (main_warn_lbl) lv_label_set_text(main_warn_lbl, "NOT CALIBRATED");
+    lv_obj_clear_flag(main_warn, LV_OBJ_FLAG_HIDDEN);
+  } else if (!sgCalibrated) {
+    if (main_warn_lbl) lv_label_set_text(main_warn_lbl, "RUN AUTO SG");
+    lv_obj_clear_flag(main_warn, LV_OBJ_FLAG_HIDDEN);
+  } else if (profileSgAtFloor(activeProfile)) {
+    // Active profile reads at the SG floor — detection is limited.
+    if (main_warn_lbl) lv_label_set_text(main_warn_lbl, LV_SYMBOL_WARNING " JAM DETECT LIMITED");
+    lv_obj_clear_flag(main_warn, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(main_warn, LV_OBJ_FLAG_HIDDEN);
+  }
 }
 
 static void ui_create_main_warning(lv_obj_t *parent) {
   main_warn = lv_obj_create(parent);
-  lv_obj_set_size(main_warn, 132, 24);
+  lv_obj_set_size(main_warn, 160, 24);   // wide enough for "JAM DETECT LIMITED"
   lv_obj_set_style_radius(main_warn, 12, LV_PART_MAIN);
   lv_obj_set_style_border_width(main_warn, 0, LV_PART_MAIN);
   lv_obj_set_style_bg_color(main_warn, lv_color_hex(0x3A2B12), LV_PART_MAIN);
@@ -207,38 +225,120 @@ static void ui_create_main_warning(lv_obj_t *parent) {
   ui_update_main_warning();
 }
 
+// Reflects calibration state on the Settings > Calibrate button. Safe to
+// call from loop() or from an LVGL callback.
+void ui_update_cal_button() {
+  if (!btn_cal) return;
+  lv_obj_t *l = lv_obj_get_child(btn_cal, 0);
+  if (calRequested || runState == CALIBRATING) {
+    lv_obj_add_state(btn_cal, LV_STATE_DISABLED);
+    if (l) lv_label_set_text(l, "Calibrating...");
+  } else {
+    lv_obj_clear_state(btn_cal, LV_STATE_DISABLED);
+    if (l) lv_label_set_text(l, calFailed ? "Retry" : "Calibrate");
+  }
+}
+
+// Reflects Auto SG state on the Settings > Auto SG button.
+void ui_update_autosg_button() {
+  if (!btn_autosg) return;
+  lv_obj_t *l = lv_obj_get_child(btn_autosg, 0);
+  if (autoSGRequested || autoSGActive) {
+    lv_obj_add_state(btn_autosg, LV_STATE_DISABLED);
+    if (l) lv_label_set_text(l, "Measuring...");
+  } else {
+    lv_obj_clear_state(btn_autosg, LV_STATE_DISABLED);
+    if (l) lv_label_set_text(l, autoSGFailed ? "Auto SG (retry)" : "Auto SG");
+  }
+}
+
 void ui_update_speed_val() {
   if (lbl_speed_val) lv_label_set_text_fmt(lbl_speed_val, "%s  %lukHz",
       profiles[activeProfile].name, (unsigned long)(ui_speed_hz / 1000));
 }
 
 void ui_update_profile_screen() {
+  const int8_t pend = pendingProfile;
   for (uint8_t i = 0; i < NUM_PROFILES; i++) {
     if (!profile_btns[i]) continue;
     if (i == activeProfile) {
       lv_obj_set_style_bg_color(profile_btns[i], lv_color_hex(0x1F6FEB), LV_PART_MAIN);
       lv_obj_set_style_border_width(profile_btns[i], 2, LV_PART_MAIN);
       lv_obj_set_style_border_color(profile_btns[i], lv_color_hex(0x00FF00), LV_PART_MAIN);
+    } else if ((int8_t)i == pend) {
+      // Queued, waiting for the next direction change — amber outline.
+      lv_obj_set_style_bg_color(profile_btns[i], lv_color_hex(0x3A3A3A), LV_PART_MAIN);
+      lv_obj_set_style_border_width(profile_btns[i], 2, LV_PART_MAIN);
+      lv_obj_set_style_border_color(profile_btns[i], lv_color_hex(0xFFD37C), LV_PART_MAIN);
     } else {
       lv_obj_set_style_bg_color(profile_btns[i], lv_color_hex(0x3A3A3A), LV_PART_MAIN);
       lv_obj_set_style_border_width(profile_btns[i], 0, LV_PART_MAIN);
     }
+    // Button text: warning symbol on profiles at the SG floor. Rewritten
+    // every update because Auto SG / hand-set trips can change it at runtime.
+    lv_obj_t *bl = lv_obj_get_child(profile_btns[i], 0);
+    if (bl) {
+      if (profileSgAtFloor(i))
+        lv_label_set_text_fmt(bl, "%s %lukHz " LV_SYMBOL_WARNING, profiles[i].name,
+                              (unsigned long)(profiles[i].speed_hz / 1000));
+      else
+        lv_label_set_text_fmt(bl, "%s  %lukHz", profiles[i].name,
+                              (unsigned long)(profiles[i].speed_hz / 1000));
+    }
   }
   if (lbl_profile_info) {
-    lv_label_set_text_fmt(lbl_profile_info, "%luHz  SG=%u",
-        (unsigned long)ui_speed_hz, RUN_SG_TRIP);
+    const bool floorWarn = profileSgAtFloor(activeProfile);
+    if (pend >= 0 && pend < (int8_t)NUM_PROFILES)
+      lv_label_set_text_fmt(lbl_profile_info, "%luHz  SG=%u\n-> %s next stroke",
+          (unsigned long)ui_speed_hz, RUN_SG_TRIP, profiles[pend].name);
+    else if (floorWarn)
+      lv_label_set_text_fmt(lbl_profile_info, "%luHz  SG=%u\n" LV_SYMBOL_WARNING " Jam detect limited",
+          (unsigned long)ui_speed_hz, RUN_SG_TRIP);
+    else
+      lv_label_set_text_fmt(lbl_profile_info, "%luHz  SG=%u",
+          (unsigned long)ui_speed_hz, RUN_SG_TRIP);
+    lv_obj_set_style_text_color(lbl_profile_info,
+        lv_color_hex((floorWarn && pend < 0) ? 0xFFD37C : 0x00FF00), LV_PART_MAIN);
   }
+}
+
+// Applies a profile switch that was queued while the machine was running.
+// Called from handleMotion() at the direction change and from loop() when
+// idle — never in the middle of a stroke.
+void applyPendingProfile() {
+  const int8_t idx = pendingProfile;
+  pendingProfile = -1;
+  if (idx < 0 || idx >= (int8_t)NUM_PROFILES) return;
+  activeProfile = (uint8_t)idx;
+  if (stepper) stepper->setSpeedInHz(ui_speed_hz);
+  markSettingsDirty();
+  ui_update_speed_val();
+  ui_update_sg_val();
+  ui_update_profile_screen();
+  webLog("Profile: %s spd=%lu sg=%u", profiles[activeProfile].name,
+         (unsigned long)ui_speed_hz, RUN_SG_TRIP);
 }
 
 void setActiveProfile(uint8_t idx) {
   if (idx >= NUM_PROFILES) return;
-  activeProfile = idx;
-  if (stepper) {
-    stepper->setSpeedInHz(ui_speed_hz);
-    if (runState == RUNNING) {
-      // Speed change takes effect immediately
-    }
+
+  // Mid-run: QUEUE it. speed_hz and sg_trip are a matched pair — SG_RESULT
+  // scales with velocity — but FastAccelStepper only picks up a new speed on
+  // the next move command, so applying the switch here would put the new
+  // profile's trip against the old profile's velocity for the rest of the
+  // stroke. Going Fast(1) -> Slow(350) that reads as a jam immediately.
+  if (runState == RUNNING || runState == STOPPING) {
+    pendingProfile = (int8_t)idx;
+    ui_update_speed_val();
+    ui_update_profile_screen();
+    webLog("Profile: %s queued for next stroke", profiles[idx].name);
+    return;
   }
+
+  pendingProfile = -1;
+  activeProfile = idx;
+  if (stepper) stepper->setSpeedInHz(ui_speed_hz);
+  markSettingsDirty();
   ui_update_speed_val();
   ui_update_sg_val();
   ui_update_profile_screen();
@@ -293,8 +393,24 @@ void ui_update_batch_remain() {
 }
 
 void ui_update_wifi_label() {
+  if (btn_wifi_toggle) {
+    lv_obj_t *l = lv_obj_get_child(btn_wifi_toggle, 0);
+    const bool pending = (wifiEnableRequested >= 0);
+    if (pending) {
+      lv_obj_set_style_bg_color(btn_wifi_toggle, lv_color_hex(0x3A3A3A), LV_PART_MAIN);
+      if (l) { lv_label_set_text(l, "Working..."); lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), LV_PART_MAIN); }
+    } else if (wifiEnabled) {
+      lv_obj_set_style_bg_color(btn_wifi_toggle, lv_color_hex(0x00FF00), LV_PART_MAIN);
+      if (l) { lv_label_set_text(l, "Turn WiFi Off"); lv_obj_set_style_text_color(l, lv_color_hex(0x000000), LV_PART_MAIN); }
+    } else {
+      lv_obj_set_style_bg_color(btn_wifi_toggle, lv_color_hex(0x3A3A3A), LV_PART_MAIN);
+      if (l) { lv_label_set_text(l, "WiFi On (reboot)"); lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), LV_PART_MAIN); }
+    }
+  }
   if (!lbl_wifi_status) return;
-  if (wifiConnected)
+  if (!wifiEnabled)
+    lv_label_set_text(lbl_wifi_status, "WiFi is OFF\nTurning it on\nreboots the device");
+  else if (wifiConnected)
     lv_label_set_text_fmt(lbl_wifi_status, "%s\nIP: %s", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
   else if (wifiAPMode)
     lv_label_set_text_fmt(lbl_wifi_status, "AP: %s\n192.168.4.1\n(open, no password)", DEFAULT_AP_SSID);
@@ -319,20 +435,31 @@ void setRunButtonState(bool running) {
 // ==========================================================================
 //  UI EVENT HANDLERS
 // ==========================================================================
+// True while a blocking motion routine owns the machine. Touch events are
+// still dispatched during those routines (they call lv_timer_handler()), so
+// every handler that commands motion or changes motion parameters must check
+// this, or the user can re-enter calibration/homing from the screen.
+static inline bool uiMotionBusy() {
+  return (runState == CALIBRATING || runState == HOMING || runState == STALLED
+          || autoSGActive || autoSGRequested);
+}
+
 static void on_ep_up_delta(lv_event_t *e) {
-  if (!endpointsCalibrated) return;
+  if (!endpointsCalibrated || uiMotionBusy()) return;
   int32_t d = (int32_t)(intptr_t)lv_event_get_user_data(e);
   upOffsetSteps = clamp_i32(upOffsetSteps + d, OFFSET_MIN, OFFSET_MAX);
   recomputeEffectiveEndpoints();
+  markSettingsDirty();
   ui_update_endpoint_edit_values();
   ui_update_tuning_numbers();
 }
 
 static void on_ep_dn_delta(lv_event_t *e) {
-  if (!endpointsCalibrated) return;
+  if (!endpointsCalibrated || uiMotionBusy()) return;
   int32_t d = (int32_t)(intptr_t)lv_event_get_user_data(e);
   downOffsetSteps = clamp_i32(downOffsetSteps + d, OFFSET_MIN, OFFSET_MAX);
   recomputeEffectiveEndpoints();
+  markSettingsDirty();
   ui_update_endpoint_edit_values();
   ui_update_tuning_numbers();
 }
@@ -405,20 +532,49 @@ static void on_go_ep_up(lv_event_t *e) {
 static void on_go_ep_dn(lv_event_t *e) {
   LV_UNUSED(e); recomputeEffectiveEndpoints(); ui_update_endpoint_edit_values(); go(ep_dn_scr);
 }
-// on_speed_slider removed — replaced by profile selection
+static void on_autosg(lv_event_t *e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (runState != IDLE || autoSGRequested || autoSGActive || !endpointsCalibrated) return;
+  autoSGFailed = false;
+  autoSGRequested = true;             // executed by handleAutoSGRequest()
+  ui_update_autosg_button();
+  lv_refr_now(NULL);                  // this handler is nested in lv_timer_handler()
+}
+
 static void on_calibrate(lv_event_t *e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  lv_obj_t *btn = lv_event_get_target(e);
-  lv_obj_t *lbl = lv_obj_get_child(btn, 0);
-  lv_obj_add_state(btn, LV_STATE_DISABLED);
-  if (lbl) lv_label_set_text(lbl, "Calibrating...");
-  bool ok = calibrateEndpointsSensorless();
-  if (lbl) lv_label_set_text(lbl, ok ? "Calibrate" : "Retry");
-  lv_obj_clear_state(btn, LV_STATE_DISABLED);
-  ui_update_main_warning();
-  recomputeEffectiveEndpoints();
-  ui_update_tuning_numbers();
-  ui_update_endpoint_edit_values();
+  // Guard against re-entry: when calibration was started from the web it runs
+  // in loop(), its nested lv_timer_handler() calls DO dispatch touch events,
+  // and without this check a screen tap would start a second calibration on
+  // top of the running one.
+  // autoSGActive covers the brief IDLE between two Auto SG profiles.
+  if (runState != IDLE || calRequested || autoSGActive) return;
+  calFailed = false;
+  calRequested = true;                 // executed by handleCalibrationRequest()
+  ui_update_cal_button();
+  lv_refr_now(NULL);                   // this handler is nested in lv_timer_handler()
+}
+
+// One-shot: restores the counter colour after the reset flash. Using a timer
+// instead of delay() keeps loop() (and the web UI) alive during the flash,
+// and unlike the old nested lv_timer_handler() it actually renders.
+static void counter_flash_restore_cb(lv_timer_t *t) {
+  LV_UNUSED(t);
+  if (counter_label) lv_obj_set_style_text_color(counter_label, lv_color_hex(0x00FF00), LV_PART_MAIN);
+}
+
+// Settings > Reset Count feedback: the button turns green and reads "Reset!"
+// for a moment, then this one-shot restores it. A second press while it is
+// showing just restarts the timer.
+static lv_obj_t   *btn_reset_count   = nullptr;
+static lv_timer_t *reset_count_timer = nullptr;
+static void reset_count_restore_cb(lv_timer_t *t) {
+  LV_UNUSED(t);
+  reset_count_timer = nullptr;          // repeat_count 1: LVGL deletes it after this
+  if (!btn_reset_count) return;
+  lv_obj_set_style_bg_color(btn_reset_count, lv_color_hex(0xB42318), LV_PART_MAIN);
+  lv_obj_t *l = lv_obj_get_child(btn_reset_count, 0);
+  if (l) lv_label_set_text(l, "Reset Count");
 }
 
 static void counter_timer_cb(lv_timer_t *t) {
@@ -472,12 +628,12 @@ void buildUI() {
   lv_obj_add_event_cb(counter_label, [](lv_event_t *e) {
     LV_UNUSED(e);
     counter = 0;
+    markSettingsDirty();
     lv_label_set_text(counter_label, "0");
-    // Brief red flash to confirm reset
+    // Brief red flash to confirm reset (restored by a one-shot timer)
     lv_obj_set_style_text_color(counter_label, lv_color_hex(0xFF4444), LV_PART_MAIN);
-    lv_timer_handler();
-    delay(200);
-    lv_obj_set_style_text_color(counter_label, lv_color_hex(0x00FF00), LV_PART_MAIN);
+    lv_timer_t *flash = lv_timer_create(counter_flash_restore_cb, 200, nullptr);
+    if (flash) lv_timer_set_repeat_count(flash, 1);
   }, LV_EVENT_LONG_PRESSED, nullptr);
 
   // Batch remaining label (below counter, hidden when no batch)
@@ -506,8 +662,11 @@ void buildUI() {
   lv_obj_t *sn = make_nav(settings_scr);
   lv_obj_t *st2 = make_title(sc, "Settings"); lv_obj_align(st2, LV_ALIGN_TOP_MID, 0, 2);
   lv_obj_t *b_cal    = make_btn(sc, "Calibrate",     140, 44, 0x444444, &lv_font_montserrat_20);
+  btn_cal = b_cal;   // loop() updates this button's label while calibrating
+  btn_autosg = make_btn(sc, "Auto SG",         140, 44, 0x444444, &lv_font_montserrat_20);
   lv_obj_t *b_config = make_btn(sc, "Config",        140, 44, 0x1F6FEB, &lv_font_montserrat_20);
   lv_obj_t *b_reset  = make_btn(sc, "Reset Count",   140, 44, 0xB42318, &lv_font_montserrat_20);
+  btn_reset_count = b_reset;
   lv_obj_t *b_back_s = make_btn(sn, "Back", 140, 44, 0x2A2A2A, &lv_font_montserrat_20);
   lv_obj_align(b_back_s, LV_ALIGN_CENTER, 0, 0);
 
@@ -533,10 +692,13 @@ void buildUI() {
   lv_obj_t *pt = make_title(pc, "Speed"); lv_obj_align(pt, LV_ALIGN_TOP_MID, 0, 2);
 
   // Info card showing current Hz + SG
-  lv_obj_t *pcard = make_card(pc, 150, 40);
+  lv_obj_t *pcard = make_card(pc, 150, 54);
   lbl_profile_info = lv_label_create(pcard);
   lv_obj_set_style_text_color(lbl_profile_info, lv_color_hex(0x00FF00), LV_PART_MAIN);
   lv_obj_set_style_text_font(lbl_profile_info, &lv_font_montserrat_14, LV_PART_MAIN);
+  lv_obj_set_style_text_align(lbl_profile_info, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_label_set_long_mode(lbl_profile_info, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(lbl_profile_info, 130);
   lv_obj_center(lbl_profile_info);
 
   // Three profile buttons
@@ -545,6 +707,7 @@ void buildUI() {
     snprintf(label, sizeof(label), "%s  %lukHz", profiles[i].name, (unsigned long)(profiles[i].speed_hz / 1000));
     profile_btns[i] = make_btn(pc, label, 140, 40, 0x3A3A3A, &lv_font_montserrat_16);
     lv_obj_add_event_cb(profile_btns[i], [](lv_event_t *e) {
+      if (uiMotionBusy()) return;   // speed/current are owned by the routine in progress
       uint8_t idx = (uint8_t)(intptr_t)lv_event_get_user_data(e);
       setActiveProfile(idx);
     }, LV_EVENT_CLICKED, (void*)(intptr_t)i);
@@ -596,9 +759,10 @@ void buildUI() {
   // WiFi screen
   wifi_scr = lv_obj_create(NULL); style_screen(wifi_scr);
   lv_obj_t *wc = make_content(wifi_scr);
+  lv_obj_set_style_pad_row(wc, 6, LV_PART_MAIN);
   lv_obj_t *wn = make_nav(wifi_scr);
   lv_obj_t *wt = make_title(wc, "WiFi"); lv_obj_align(wt, LV_ALIGN_TOP_MID, 0, 2);
-  lv_obj_t *wcard = make_card(wc, 150, 100);
+  lv_obj_t *wcard = make_card(wc, 150, 86);
   lbl_wifi_status = lv_label_create(wcard);
   lv_obj_set_style_text_color(lbl_wifi_status, lv_color_hex(0x00FF00), LV_PART_MAIN);
   lv_obj_set_style_text_font(lbl_wifi_status, &lv_font_montserrat_12, LV_PART_MAIN);
@@ -606,6 +770,7 @@ void buildUI() {
   lv_obj_set_width(lbl_wifi_status, 130);
   lv_obj_set_style_text_align(lbl_wifi_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_center(lbl_wifi_status);
+  btn_wifi_toggle = make_btn(wc, "WiFi On (reboot)", 140, 44, 0x3A3A3A, &lv_font_montserrat_14);
   lv_obj_t *b_wifi_reset = make_btn(wc, "Reset WiFi", 140, 44, 0xB42318, &lv_font_montserrat_20);
   lv_obj_t *b_back_w = make_btn(wn, "Back", 140, 44, 0x2A2A2A, &lv_font_montserrat_20);
   lv_obj_align(b_back_w, LV_ALIGN_CENTER, 0, 0);
@@ -689,10 +854,17 @@ void buildUI() {
   lv_obj_set_pos(sgP1, sgbw + sggap, sgbh + sggap);
 
   auto sg_cb = [](lv_event_t *e) {
+    if (uiMotionBusy()) return;   // Auto SG owns the trips while it runs
     int32_t d = (int32_t)(intptr_t)lv_event_get_user_data(e);
     int32_t v = (int32_t)RUN_SG_TRIP + d;
     RUN_SG_TRIP = (uint16_t)constrain(v, (int32_t)RUN_SG_TRIP_MIN, (int32_t)RUN_SG_TRIP_MAX);
+    // Set up only while EVERY profile has a trip — otherwise a profile would
+    // run with no detection at all. Re-locks if a trip goes back to 0.
+    sgCalibrated = allSgTripsSet();
+    markSettingsDirty();
     ui_update_sg_val();
+    ui_update_profile_screen();
+    ui_update_main_warning();
   };
   lv_obj_add_event_cb(sgM5, sg_cb, LV_EVENT_CLICKED, (void*)(intptr_t)-5);
   lv_obj_add_event_cb(sgM1, sg_cb, LV_EVENT_CLICKED, (void*)(intptr_t)-1);
@@ -758,6 +930,7 @@ void buildUI() {
     int32_t d = (int32_t)(intptr_t)lv_event_get_user_data(e);
     int32_t v = batchTarget + d;
     batchTarget = constrain(v, (int32_t)0, (int32_t)9999);
+    markSettingsDirty();
     ui_update_batch_val();
   };
   lv_obj_add_event_cb(brM100, br_cb, LV_EVENT_CLICKED, (void*)(intptr_t)-100);
@@ -767,11 +940,12 @@ void buildUI() {
   lv_obj_add_event_cb(brP10,  br_cb, LV_EVENT_CLICKED, (void*)(intptr_t)+10);
   lv_obj_add_event_cb(brP100, br_cb, LV_EVENT_CLICKED, (void*)(intptr_t)+100);
 
-  // Start batch button
+  // Start batch button — black text on green (white-on-green is unreadable)
   lv_obj_t *btn_start_batch = make_btn(brc, "Start Batch", 140, 38, 0x00FF00, &lv_font_montserrat_18);
+  lv_obj_set_style_text_color(lv_obj_get_child(btn_start_batch, 0), lv_color_hex(0x000000), LV_PART_MAIN);
   lv_obj_add_event_cb(btn_start_batch, [](lv_event_t *e) {
     LV_UNUSED(e);
-    if (batchTarget <= 0 || runState != IDLE || !endpointsCalibrated) return;
+    if (batchTarget <= 0 || runState != IDLE || autoSGActive || !endpointsCalibrated || !sgCalibrated) return;
     batchCount = 0;
     batchActive = true;
     startRunBetweenEndpoints();
@@ -788,24 +962,56 @@ void buildUI() {
   lv_obj_add_event_cb(btn_settings, [](lv_event_t *e){ LV_UNUSED(e); go(settings_scr); }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(btn_run_global, [](lv_event_t *e){
     LV_UNUSED(e);
-    if (runState == IDLE) { startRunBetweenEndpoints(); setRunButtonState(runState == RUNNING); }
-    else if (runState == RUNNING) { requestGracefulStop(); setRunButtonState(false); batchActive = false; }
+    // STOP must keep working during Auto SG (it is the touch abort path),
+    // but RUN must not start anything in the IDLE gap between its profiles.
+    if (runState == IDLE && !autoSGActive) { startRunBetweenEndpoints(); setRunButtonState(runState == RUNNING); }
+    else if (runState == RUNNING) { requestGracefulStop(); setRunButtonState(false); }
+    // requestGracefulStop() clears batchActive, so every stop path behaves
+    // the same whether it came from the screen, the web UI or OTA.
   }, LV_EVENT_CLICKED, nullptr);
 
   lv_obj_add_event_cb(b_speed,  on_go_profile, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_tuning, on_go_tuning, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_cal,    on_calibrate, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(btn_autosg, on_autosg,   LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_config, [](lv_event_t *e){ LV_UNUSED(e); go(config_scr); }, LV_EVENT_CLICKED, nullptr);
-  lv_obj_add_event_cb(b_reset, [](lv_event_t *e){ LV_UNUSED(e); counter = 0; if (counter_label) lv_label_set_text(counter_label, "0"); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(b_reset, [](lv_event_t *e){
+    LV_UNUSED(e);
+    counter = 0;
+    markSettingsDirty();
+    if (counter_label) lv_label_set_text(counter_label, "0");
+    webLog("Counter reset");
+    // Visible confirmation on the Settings screen itself.
+    if (btn_reset_count) {
+      lv_obj_set_style_bg_color(btn_reset_count, lv_color_hex(0x2E7D32), LV_PART_MAIN);
+      lv_obj_t *l = lv_obj_get_child(btn_reset_count, 0);
+      if (l) lv_label_set_text(l, LV_SYMBOL_OK " Reset!");
+    }
+    if (reset_count_timer) {
+      lv_timer_reset(reset_count_timer);
+    } else {
+      reset_count_timer = lv_timer_create(reset_count_restore_cb, 1200, nullptr);
+      if (reset_count_timer) lv_timer_set_repeat_count(reset_count_timer, 1);
+    }
+  }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_back_s, on_go_main, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_stall, [](lv_event_t *e){ LV_UNUSED(e); ui_update_sg_val(); go(stall_scr); }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_wifi, [](lv_event_t *e){ LV_UNUSED(e); ui_update_wifi_label(); go(wifi_scr); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(btn_wifi_toggle, [](lv_event_t *e){
+    LV_UNUSED(e);
+    if (wifiEnableRequested >= 0) return;          // already switching
+    // Deferred to loop(): startWiFi() blocks for up to ~10 s connecting and
+    // ~3 s scanning, which must not happen inside an LVGL callback.
+    wifiEnableRequested = wifiEnabled ? 0 : 1;
+    ui_update_wifi_label();
+    lv_refr_now(NULL);
+  }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_wifi_reset, [](lv_event_t *e){
     LV_UNUSED(e);
     clearWiFiCredentials();
     webLog("WiFi credentials cleared, rebooting...");
+    rebootRequestMs = millis();   // before the flag: loop() reads both
     rebootRequested = true;
-    rebootRequestMs = millis();
   }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_back_cfg, [](lv_event_t *e){ LV_UNUSED(e); go(settings_scr); }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(b_back_p, [](lv_event_t *e){ LV_UNUSED(e); go(config_scr); }, LV_EVENT_CLICKED, nullptr);
@@ -824,4 +1030,6 @@ void buildUI() {
   ui_update_main_warning();
   ui_update_sg_val();
   ui_update_batch_val();
+  ui_update_cal_button();
+  ui_update_autosg_button();
 }

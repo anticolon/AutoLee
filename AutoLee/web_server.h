@@ -11,21 +11,34 @@
 // ==========================================================================
 //  STATE JSON BUILDER
 // ==========================================================================
+// Escape a string for embedding in JSON (quotes, backslashes, control chars)
+static String jsonEscape(const String &s) {
+  String out;
+  out.reserve(s.length() + 8);
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (c == '"')       out += "\\\"";
+    else if (c == '\\') out += "\\\\";
+    else if ((uint8_t)c >= 0x20) out += c;  // drop control chars
+  }
+  return out;
+}
+
 static String buildStateJSON() {
-  char buf[900];
+  char buf[1280];
   const char *wfStat = wifiConnected ? "Connected" : (wifiAPMode ? "AP Mode" : "Disconnected");
-  String wfSSID = wifiConnected ? WiFi.SSID() : (wifiAPMode ? String(DEFAULT_AP_SSID) : String("—"));
+  String wfSSID = jsonEscape(wifiConnected ? WiFi.SSID() : (wifiAPMode ? String(DEFAULT_AP_SSID) : String("—")));
   String wfIP = wifiConnected ? WiFi.localIP().toString() : (wifiAPMode ? WiFi.softAPIP().toString() : String("—"));
-  snprintf(buf, sizeof(buf),
+  int n = snprintf(buf, sizeof(buf),
     "{\"version\":\"%s\",\"state\":\"%s\",\"counter\":%ld,\"speed\":%lu,\"calibrated\":%s,"
     "\"rawUp\":%ld,\"rawDown\":%ld,\"endpointUp\":%ld,\"endpointDown\":%ld,"
     "\"upOffset\":%ld,\"downOffset\":%ld,\"position\":%ld,\"sgTrip\":%u,"
-    "\"workZone\":%ld,\"currentMa\":%u,"
-    "\"profileIdx\":%u,\"profileName\":\"%s\","
-    "\"profiles\":[{\"name\":\"Slow\",\"hz\":%lu,\"sg\":%u},"
-    "{\"name\":\"Normal\",\"hz\":%lu,\"sg\":%u},"
-    "{\"name\":\"Fast\",\"hz\":%lu,\"sg\":%u}],"
-    "\"wifiStatus\":\"%s\",\"wifiSSID\":\"%s\",\"wifiIP\":\"%s\","
+    "\"workZone\":%ld,\"currentMa\":%u,\"sgMin\":%u,\"sgMax\":%u,\"autoSG\":%s,\"sgCal\":%s,"
+    "\"profileIdx\":%u,\"profileName\":\"%s\",\"pendingProfile\":%d,"
+    "\"profiles\":[{\"name\":\"Slow\",\"hz\":%lu,\"sg\":%u,\"floor\":%s},"
+    "{\"name\":\"Normal\",\"hz\":%lu,\"sg\":%u,\"floor\":%s},"
+    "{\"name\":\"Fast\",\"hz\":%lu,\"sg\":%u,\"floor\":%s}],"
+    "\"wifiEnabled\":%s,\"wifiStatus\":\"%s\",\"wifiSSID\":\"%s\",\"wifiIP\":\"%s\","
     "\"batchTarget\":%ld,\"batchCount\":%ld,\"batchActive\":%s}",
     FW_VERSION,
     runState==RUNNING?"RUNNING":runState==STOPPING?"STOPPING":runState==CALIBRATING?"CALIBRATING":runState==STALLED?"STALLED":runState==HOMING?"HOMING":"IDLE",
@@ -35,13 +48,22 @@ static String buildStateJSON() {
     stepper ? stepper->getCurrentPosition() : 0L,
     RUN_SG_TRIP,
     (long)SG_WORK_ZONE_STEPS, RUN_CURRENT_MA,
-    activeProfile, profiles[activeProfile].name,
-    (unsigned long)profiles[0].speed_hz, profiles[0].sg_trip,
-    (unsigned long)profiles[1].speed_hz, profiles[1].sg_trip,
-    (unsigned long)profiles[2].speed_hz, profiles[2].sg_trip,
-    wfStat, wfSSID.c_str(), wfIP.c_str(),
-    batchTarget, batchCount,
+    (runStrokeMinSG == 0xFFFF) ? 0 : runStrokeMinSG, runStrokeMaxSG,
+    (autoSGActive || autoSGRequested) ? "true" : "false",
+    sgCalibrated ? "true" : "false",
+    activeProfile, profiles[activeProfile].name, (int)pendingProfile,
+    (unsigned long)profiles[0].speed_hz, profiles[0].sg_trip, profileSgAtFloor(0) ? "true" : "false",
+    (unsigned long)profiles[1].speed_hz, profiles[1].sg_trip, profileSgAtFloor(1) ? "true" : "false",
+    (unsigned long)profiles[2].speed_hz, profiles[2].sg_trip, profileSgAtFloor(2) ? "true" : "false",
+    wifiEnabled ? "true" : "false", wfStat, wfSSID.c_str(), wfIP.c_str(),
+    (long)batchTarget, (long)batchCount,
     batchActive ? "true" : "false");
+  // A silently truncated buffer produces invalid JSON, which the browser's
+  // JSON.parse() catch{} swallows — the panel just stops updating with no
+  // visible error. Fail loudly-but-validly instead.
+  if (n < 0 || n >= (int)sizeof(buf)) {
+    return String("{\"version\":\"" FW_VERSION "\",\"error\":\"json_truncated\"}");
+  }
   return String(buf);
 }
 
@@ -94,7 +116,6 @@ input[type=text],input[type=password]{width:100%;padding:10px;margin-bottom:6px;
 .nav-footer{margin-top:16px;padding:14px 0;text-align:center;border-top:1px solid var(--border)}
 .nav-footer a{color:var(--accent);text-decoration:none;font-size:.85em;font-weight:600;margin:0 10px;cursor:pointer}
 .nav-footer a:hover{opacity:.7}
-.nav-footer a.active{color:var(--green)}
 .back-link{display:inline-block;color:var(--accent);font-size:.85em;font-weight:600;cursor:pointer;margin-bottom:12px;text-decoration:none}
 .back-link:hover{opacity:.7}
 </style></head><body>
@@ -112,6 +133,9 @@ input[type=text],input[type=password]{width:100%;padding:10px;margin-bottom:6px;
 <span id="cb" class="badge warn">NOT CALIBRATED</span>
 <span id="sb" class="badge ok">IDLE</span></div>
 <div class="counter" id="ctr">0</div>
+<div id="sgwarn" style="display:none;background:#3A2B12;border:1px solid #6b5120;border-radius:8px;padding:8px;margin-bottom:8px;font-size:.8em;color:#FFD37C;text-align:center">
+Jam detection is not set up. Calibrate the endpoints, then run <b>Auto SG</b> on the Config page (or set all three trips by hand) before using the press.</div>
+<div id="sgfloor" style="display:none;background:#3A2B12;border:1px solid #6b5120;border-radius:8px;padding:8px;margin-bottom:8px;font-size:.8em;color:#FFD37C;text-align:center"></div>
 <button class="btn btn-run" id="br" onclick="toggleRun()">RUN</button>
 <div class="jam-alert" id="jamAlert">
 <div style="color:#FF4444;font-weight:700;margin-bottom:4px">&#9888; JAM DETECTED</div>
@@ -162,10 +186,10 @@ input[type=text],input[type=password]{width:100%;padding:10px;margin-bottom:6px;
 <div class="sec">
 <h2>Motor Current</h2>
 <div class="slider-row">
-<input type="range" id="mcSlider" min="1000" max="4500" step="100" value="2500" oninput="setCurrent(this.value)">
+<input type="range" id="mcSlider" min="1000" max="4500" step="100" value="2500" oninput="showCurrent(this.value)" onchange="setCurrent(this.value)">
 <span id="mcv">2500</span>
 </div>
-<div class="hint">Run current in mA (1000–4500). Higher = more torque, more heat.</div>
+<div class="hint">Run current in mA (1000–4500). Higher = more torque, more heat. Applied when you release the slider.</div>
 <div id="mcWarn" style="display:none;background:#3A2B12;border-radius:6px;padding:6px 10px;margin-top:6px;font-size:.8em;color:#FFD37C">&#9888; Above 4000 mA exceeds motor rating. Ensure adequate cooling.</div>
 </div>
 
@@ -202,6 +226,14 @@ input[type=text],input[type=password]{width:100%;padding:10px;margin-bottom:6px;
 <!-- STALL GUARD + WORK ZONE -->
 <div class="sec">
 <h2>Stall Guard (per profile)</h2>
+<div class="hint">On this machine SG_RESULT <b>rises</b> under load, so a jam is detected when it goes <b>above</b> the trip value: <b>lower = more sensitive</b>. 0 disables detection for that profile (readings are still logged).</div>
+<div class="sr"><span class="l">Last stroke max SG</span><span class="v" id="sgmax">-</span></div>
+<div class="sr"><span class="l">Last stroke min SG</span><span class="v" id="sgmin">-</span></div>
+<div class="hint">Set a profile's trip just above the highest max you see running clean. The right values are specific to your machine &mdash; measure them rather than copying someone else's.</div>
+<hr>
+<div class="hint" style="margin-bottom:8px"><b>Auto SG</b> runs every profile with detection disabled, records the highest SG each one reaches and sets its trip to that plus one. Takes about a minute.</div>
+<div class="hint" style="color:var(--red);font-weight:700;margin-bottom:8px">Empty the press first &mdash; nothing is detecting while it measures.</div>
+<button class="btn btn-dark btn-sm" id="basg" onclick="autoSg()" style="width:100%">Auto SG Calibration</button>
 <div id="sgProfiles"></div>
 <hr>
 <div class="sr"><span class="l">Work Zone (steps)</span><span class="v" id="wzv">5500</span></div>
@@ -272,6 +304,7 @@ Tap to select .bin<br><span style="font-size:.8em">or drag &amp; drop</span></di
 
 <div class="sec">
 <h2>Connection</h2>
+<div class="sr"><span class="l">WiFi</span><span class="v" id="wfEn">—</span></div>
 <div class="sr"><span class="l">Status</span><span class="v" id="wfStatus">—</span></div>
 <div class="sr"><span class="l">SSID</span><span class="v" id="wfSSID">—</span></div>
 <div class="sr"><span class="l">IP Address</span><span class="v" id="wfIP">—</span></div>
@@ -285,6 +318,12 @@ Tap to select .bin<br><span style="font-size:.8em">or drag &amp; drop</span></di
 <div class="row" style="gap:6px">
 <button class="btn btn-blue btn-sm" onclick="saveWifi()" style="flex:1">Save &amp; Reboot</button>
 <button class="btn btn-red btn-sm" onclick="resetWifi()" style="flex:1">Reset WiFi</button></div>
+</div>
+
+<div class="sec">
+<h2>Radio</h2>
+<div class="hint" style="margin-bottom:8px">Turning WiFi off shuts down the radio, this web panel and OTA. The machine keeps running from the touch screen, and WiFi can only be turned back on there.</div>
+<button class="btn btn-red btn-sm" onclick="wifiOff()" style="width:100%">Turn WiFi Off</button>
 </div>
 
 <!-- NAV FOOTER -->
@@ -302,7 +341,10 @@ Tap to select .bin<br><span style="font-size:.8em">or drag &amp; drop</span></di
 <script>
 let es;
 function sse(){es=new EventSource('/events');es.onmessage=e=>{try{upd(JSON.parse(e.data))}catch(x){}};
-es.addEventListener('log',e=>{try{const d=JSON.parse(e.data);const lb=document.getElementById('logBox');lb.textContent+=d.log.join('\n')+'\n';lb.scrollTop=lb.scrollHeight}catch(x){}});
+es.addEventListener('log',e=>{try{const d=JSON.parse(e.data);const lb=document.getElementById('logBox');
+let t=lb.textContent+d.log.join('\n')+'\n';
+const ln=t.split('\n');if(ln.length>500)t=ln.slice(-500).join('\n');
+lb.textContent=t;lb.scrollTop=lb.scrollHeight}catch(x){}});
 es.onerror=()=>{es.close();setTimeout(sse,3000)}}
 sse();
 
@@ -313,15 +355,26 @@ function showPage(id){
 }
 
 
+// Profile button text; a profile at the SG floor gets a warning marker.
+function profLabel(p){
+  return p.name+(p.floor?' <span style="color:#FFD37C">&#9888;</span>':'')
+    +'<br><span style="font-size:.75em;opacity:.7">'+Math.round(p.hz/1000)+'kHz</span>';
+}
+function sgLabel(p,isActive){
+  return p.name+' ('+Math.round(p.hz/1000)+'kHz) <span style="color:'+(isActive?'var(--green)':'var(--muted)')+'">SG='+p.sg+'</span>'
+    +(p.floor?' <span style="color:#FFD37C">&#9888; floor</span>':'');
+}
 let profBuilt=false;
-function buildProfileBtns(profiles,activeIdx){
+function buildProfileBtns(profiles,activeIdx,pendIdx){
   const row=document.getElementById('profileRow');
   if(!row)return;
   if(profBuilt){
-    // Just update active highlight
+    // Just update active highlight + queued outline
     profiles.forEach((p,i)=>{
       const b=document.getElementById('profBtn'+i);
-      if(b) b.className='btn '+(i===activeIdx?'btn-blue':'btn-dark')+' btn-sm';
+      if(b){b.className='btn '+(i===activeIdx?'btn-blue':'btn-dark')+' btn-sm';
+            b.style.outline=(i===pendIdx?'2px solid #FFD37C':'none');
+            b.innerHTML=profLabel(p)}
     });
     return;
   }
@@ -331,7 +384,8 @@ function buildProfileBtns(profiles,activeIdx){
     b.id='profBtn'+i;
     b.className='btn '+(i===activeIdx?'btn-blue':'btn-dark')+' btn-sm';
     b.style.cssText='flex:1;padding:10px 4px';
-    b.innerHTML=p.name+'<br><span style="font-size:.75em;opacity:.7">'+Math.round(p.hz/1000)+'kHz</span>';
+    b.style.outline=(i===pendIdx?'2px solid #FFD37C':'none');
+    b.innerHTML=profLabel(p);
     b.onclick=()=>setProfile(i);
     row.appendChild(b);
   });
@@ -350,7 +404,7 @@ function buildSgControls(profiles,activeIdx){
       const lbl=document.getElementById('sgLbl'+i);
       const inp=document.getElementById('sgIn'+i);
       const row=document.getElementById('sgRow'+i);
-      if(lbl) lbl.innerHTML=p.name+' ('+Math.round(p.hz/1000)+'kHz) <span style="color:'+(isActive?'var(--green)':'var(--muted)')+'">SG='+p.sg+'</span>';
+      if(lbl) lbl.innerHTML=sgLabel(p,isActive);
       if(row) row.style.background=isActive?'#1a2a3a':'#161616';
       // Only update input if it's not focused (user might be typing)
       if(inp && document.activeElement!==inp) inp.value=p.sg;
@@ -364,11 +418,11 @@ function buildSgControls(profiles,activeIdx){
     const div=document.createElement('div');
     div.id='sgRow'+i;
     div.style.cssText='margin-bottom:8px;padding:6px 8px;border-radius:8px;background:'+(isActive?'#1a2a3a':'#161616');
-    div.innerHTML='<div class="sr" id="sgLbl'+i+'" style="margin-bottom:4px">'+p.name+' ('+Math.round(p.hz/1000)+'kHz) <span style="color:'+(isActive?'var(--green)':'var(--muted)')+'">SG='+p.sg+'</span></div>'
+    div.innerHTML='<div class="sr" id="sgLbl'+i+'" style="margin-bottom:4px">'+sgLabel(p,isActive)+'</div>'
       +'<div style="display:flex;align-items:center;gap:8px">'
-      +'<input type="text" inputmode="numeric" pattern="[0-9]*" id="sgIn'+i+'" value="'+p.sg+'" style="width:80px;padding:6px 8px;background:#222;border:1px solid #444;border-radius:6px;color:#fff;font-size:.9em;text-align:center" placeholder="0-500">'
+      +'<input type="text" inputmode="numeric" pattern="[0-9]*" id="sgIn'+i+'" value="'+p.sg+'" style="width:80px;padding:6px 8px;background:#222;border:1px solid #444;border-radius:6px;color:#fff;font-size:.9em;text-align:center" placeholder="0-1023">'
       +'<button class="btn btn-blue btn-sm" id="sgBtn'+i+'">Set</button>'
-      +'<span style="color:var(--dim);font-size:.7em">0 – 500</span></div>';
+      +'<span style="color:var(--dim);font-size:.7em">0 – 1023</span></div>';
     c.appendChild(div);
     // Attach event listeners properly (not via inline onclick)
     document.getElementById('sgBtn'+i).addEventListener('click',function(){setSg(i)});
@@ -381,12 +435,25 @@ function buildSgControls(profiles,activeIdx){
 function upd(d){
   if(d.version)document.getElementById('ver').textContent='v'+d.version;
   document.getElementById('ctr').textContent=d.counter;
-  document.getElementById('sv').textContent=d.profileName+' \u2014 '+d.speed+'Hz (SG='+d.sgTrip+')';
+  let svTxt=d.profileName+' — '+d.speed+'Hz (SG='+d.sgTrip+')';
+  if(d.profiles&&d.pendingProfile>=0&&d.profiles[d.pendingProfile])svTxt+=' → '+d.profiles[d.pendingProfile].name+' next stroke';
+  document.getElementById('sv').textContent=svTxt;
     document.getElementById('cp').textContent=d.position;
     document.getElementById('wzv').textContent=d.workZone;
+  if(d.sgMin!==undefined){const e=document.getElementById('sgmin');if(e)e.textContent=d.sgMin>0?d.sgMin:'-'}
+  if(d.sgMax!==undefined){const e=document.getElementById('sgmax');if(e)e.textContent=d.sgMax>0?d.sgMax:'-'}
+  {const e=document.getElementById('basg');if(e){e.disabled=!!d.autoSG||d.state!=='IDLE';e.textContent=d.autoSG?'Measuring...':'Auto SG Calibration'}}
   if(d.wifiStatus){document.getElementById('wfStatus').textContent=d.wifiStatus;document.getElementById('wfSSID').textContent=d.wifiSSID;document.getElementById('wfIP').textContent=d.wifiIP}
-  if(d.currentMa){document.getElementById('mcv').textContent=d.currentMa;document.getElementById('mcSlider').value=d.currentMa;document.getElementById('mcWarn').style.display=d.currentMa>4000?'block':'none'}
-  if(d.profiles){buildProfileBtns(d.profiles,d.profileIdx);buildSgControls(d.profiles,d.profileIdx)}
+  if(d.wifiEnabled!==undefined)document.getElementById('wfEn').textContent=d.wifiEnabled?'ON':'OFF';
+  if(d.currentMa){
+    const sl=document.getElementById('mcSlider');
+    // Don't yank the slider out from under the user mid-drag.
+    if(document.activeElement!==sl&&(Date.now()-mcTouched)>1500){
+      document.getElementById('mcv').textContent=d.currentMa;sl.value=d.currentMa;
+      document.getElementById('mcWarn').style.display=d.currentMa>4000?'block':'none';
+    }
+  }
+  if(d.profiles){buildProfileBtns(d.profiles,d.profileIdx,d.pendingProfile);buildSgControls(d.profiles,d.profileIdx)}
   document.getElementById('btv').textContent=d.batchTarget>0?d.batchTarget:'OFF';
   const bts=document.getElementById('btStatus');
   const bbs=document.getElementById('bbStart');
@@ -406,6 +473,16 @@ function upd(d){
   const br=document.getElementById('br');
   if(d.state==='RUNNING'){br.textContent='STOP';br.classList.add('active')}
   else{br.textContent='RUN';br.classList.remove('active')}
+  // RUN does nothing unless we're IDLE or RUNNING — reflect that in the UI.
+  // The SG gate only blocks starting: STOP must stay live while RUNNING,
+  // which includes a first-time Auto SG (sgCal is still false then).
+  br.disabled=(d.state==='CALIBRATING'||d.state==='STALLED'||d.state==='HOMING'||d.state==='STOPPING'||(d.sgCal===false&&d.state!=='RUNNING'));
+  {const w=document.getElementById('sgwarn');if(w)w.style.display=(d.sgCal===false)?'block':'none'}
+  {const f=document.getElementById('sgfloor');
+   const ap=(d.profiles&&d.profiles[d.profileIdx])?d.profiles[d.profileIdx]:null;
+   if(f){if(d.sgCal!==false&&ap&&ap.floor){
+     f.innerHTML='&#9888; <b>'+ap.name+'</b> reads at the StallGuard floor on this machine. Jam detection is <b>limited</b> and may not stop a jam. Use a slower profile when jam protection matters.';
+     f.style.display='block'}else f.style.display='none'}}
   const bc=document.getElementById('bc');
   bc.disabled=d.state==='CALIBRATING';
   bc.textContent=d.state==='CALIBRATING'?'Calibrating...':'Calibrate';
@@ -419,12 +496,17 @@ function upd(d){
 }
 
 function toggleRun(){fetch('/api/toggle_run',{method:'POST'})}
+function autoSg(){
+  if(!confirm('Run Auto SG calibration?\n\nThe press must be EMPTY - jam detection is disabled while it measures, and it runs all three speed profiles for about a minute.'))return;
+  fetch('/api/action?do=auto_sg',{method:'POST'})}
 function setSg(p){const v=parseInt(document.getElementById('sgIn'+p).value)||0;fetch('/api/sg_trip?profile='+p+'&value='+v,{method:'POST'})}
 function setWz(d){fetch('/api/work_zone?delta='+d,{method:'POST'})}
 function setBatch(d){fetch('/api/batch?delta='+d,{method:'POST'})}
 function doBatch(a){fetch('/api/batch?action='+a,{method:'POST'})}
 function setProfile(i){fetch('/api/profile?idx='+i,{method:'POST'})}
-function setCurrent(v){document.getElementById('mcv').textContent=v;document.getElementById('mcWarn').style.display=v>4000?'block':'none';fetch('/api/current?ma='+v,{method:'POST'})}
+let mcTouched=0;
+function showCurrent(v){mcTouched=Date.now();document.getElementById('mcv').textContent=v;document.getElementById('mcWarn').style.display=v>4000?'block':'none'}
+function setCurrent(v){mcTouched=Date.now();showCurrent(v);fetch('/api/current?ma='+v,{method:'POST'})}
 function adj(w,d){fetch('/api/endpoint?which='+w+'&delta='+d,{method:'POST'})}
 function doAct(a){fetch('/api/action?do='+a,{method:'POST'})}
 function saveWifi(){
@@ -432,6 +514,10 @@ function saveWifi(){
   if(!s){alert('SSID required');return}
   fetch('/api/wifi?ssid='+encodeURIComponent(s)+'&pass='+encodeURIComponent(p),{method:'POST'})
   .then(()=>{alert('Saved! Rebooting...');setTimeout(()=>location.reload(),5000)})}
+function wifiOff(){
+  if(!confirm('Turn WiFi off? This page and OTA will stop working. You can only turn it back on from the WiFi screen on the device.'))return;
+  fetch('/api/wifi_enable?on=0',{method:'POST'})
+  .then(()=>{alert('WiFi shutting down.')})}
 function resetWifi(){
   if(!confirm('Clear saved WiFi credentials and reboot into setup mode?'))return;
   fetch('/api/wifi_reset',{method:'POST'})
@@ -490,13 +576,19 @@ static String wifiConfigPage() {
   return html;
 }
 
+// Registered unconditionally at boot: WiFi can be switched on later and come
+// up in AP mode, long after setupWebServer() ran. The redirect is gated on
+// captivePortalRunning at request time instead of at registration time.
 static void setupCaptiveProbeEndpoints() {
   const char* probes[] = {
     "/generate_204", "/gen_204", "/hotspot-detect.html",
     "/library/test/success.html", "/ncsi.txt", "/connecttest.txt", "/fwlink"
   };
   for (auto &p : probes)
-    webServer.on(p, HTTP_GET, [](AsyncWebServerRequest *r){ r->redirect("/"); });
+    webServer.on(p, HTTP_GET, [](AsyncWebServerRequest *r){
+      if (captivePortalRunning) r->redirect("/");
+      else r->send(404, "text/plain", "Not found");
+    });
 }
 
 static void setupWebServer() {
@@ -523,22 +615,22 @@ static void setupWebServer() {
         "<h2>Missing SSID</h2><p><a href='/' style='color:#7cf;'>Go back</a></p></body></html>");
       return;
     }
-    saveWiFiCredentials(finalSSID, pw);
+    // Deferred to loop(): NVS writes must not run in the AsyncTCP task
+    // (they block the TCP stack and share the global Preferences object).
+    pendingWifiSSID = finalSSID;
+    pendingWifiPass = pw;
+    webWifiSaveRequested = true;
     req->send(200, "text/html",
       "<html><body style='font-family:sans-serif;text-align:center;padding:40px;background:#111;color:#eee;'>"
       "<h2 style='color:#28a745;'>Saved!</h2><p>Rebooting...</p></body></html>");
-    rebootRequested = true;
-    rebootRequestMs = millis();
   });
 
   // WiFi clear
   webServer.on("/clear", HTTP_POST, [](AsyncWebServerRequest *req) {
-    clearWiFiCredentials();
+    webWifiClearRequested = true;   // deferred to loop() — NVS write
     req->send(200, "text/html",
       "<html><body style='font-family:sans-serif;text-align:center;padding:40px;background:#111;color:#eee;'>"
       "<h2>WiFi Cleared</h2><p>Rebooting...</p></body></html>");
-    rebootRequested = true;
-    rebootRequestMs = millis();
   });
 
   events.onConnect([](AsyncEventSourceClient *client) {
@@ -551,13 +643,8 @@ static void setupWebServer() {
   });
 
   webServer.on("/api/toggle_run", HTTP_POST, [](AsyncWebServerRequest *req) {
-    if (runState == IDLE) {
-      startRunBetweenEndpoints();
-      setRunButtonState(runState == RUNNING);
-    } else if (runState == RUNNING) {
-      requestGracefulStop();
-      setRunButtonState(false);
-    }
+    // Deferred to loop(): touches stepper, TMC5160 SPI, and LVGL
+    webToggleRunRequested = true;
     req->send(200, "text/plain", "ok");
   });
 
@@ -565,7 +652,8 @@ static void setupWebServer() {
     if (req->hasParam("idx")) {
       uint8_t idx = (uint8_t)req->getParam("idx")->value().toInt();
       if (idx < NUM_PROFILES) {
-        setActiveProfile(idx);
+        // Deferred to loop(): setActiveProfile touches stepper and LVGL
+        webProfileRequested = (int8_t)idx;
       }
     }
     req->send(200, "text/plain", "ok");
@@ -573,79 +661,69 @@ static void setupWebServer() {
 
   webServer.on("/api/current", HTTP_POST, [](AsyncWebServerRequest *req) {
     if (req->hasParam("ma")) {
-      uint16_t ma = (uint16_t)req->getParam("ma")->value().toInt();
-      RUN_CURRENT_MA = constrain(ma, RUN_CURRENT_MIN, RUN_CURRENT_MAX);
-      driver.rms_current(RUN_CURRENT_MA);
-      webLog("Current set to %u mA", RUN_CURRENT_MA);
+      // Deferred to loop(): rms_current() is an SPI write that could collide
+      // with read_sg() polling on the shared display/TMC bus
+      webCurrentMaRequested = req->getParam("ma")->value().toInt();
     }
     req->send(200, "text/plain", "ok");
   });
 
   webServer.on("/api/endpoint", HTTP_POST, [](AsyncWebServerRequest *req) {
-    if (req->hasParam("which") && req->hasParam("delta") && endpointsCalibrated) {
+    // Deferred to loop(): endpointUp/endpointDown are read by handleMotion()
+    // on every pass, so they must not be rewritten from the AsyncTCP task.
+    if (req->hasParam("which") && req->hasParam("delta")) {
       String w = req->getParam("which")->value();
       int32_t d = req->getParam("delta")->value().toInt();
-      if (w == "up") upOffsetSteps = clamp_i32(upOffsetSteps + d, OFFSET_MIN, OFFSET_MAX);
-      else downOffsetSteps = clamp_i32(downOffsetSteps + d, OFFSET_MIN, OFFSET_MAX);
-      recomputeEffectiveEndpoints();
-      ui_update_endpoint_edit_values();
-      ui_update_tuning_numbers();
+      if (w == "up") webUpOffsetDelta   = webUpOffsetDelta + d;
+      else           webDownOffsetDelta = webDownOffsetDelta + d;
     }
     req->send(200, "text/plain", "ok");
   });
 
   webServer.on("/api/sg_trip", HTTP_POST, [](AsyncWebServerRequest *req) {
-    uint8_t tgt = activeProfile;
+    // Deferred to loop(): handleMotion() reads RUN_SG_TRIP every pass.
+    int8_t tgt = (int8_t)activeProfile;
     if (req->hasParam("profile")) {
-      uint8_t p = (uint8_t)req->getParam("profile")->value().toInt();
-      if (p < NUM_PROFILES) tgt = p;
+      int32_t p = req->getParam("profile")->value().toInt();
+      if (p >= 0 && p < (int32_t)NUM_PROFILES) tgt = (int8_t)p;
     }
     if (req->hasParam("value")) {
       // Absolute value (from web text input)
-      int32_t v = req->getParam("value")->value().toInt();
-      profiles[tgt].sg_trip = (uint16_t)constrain(v, (int32_t)RUN_SG_TRIP_MIN, (int32_t)RUN_SG_TRIP_MAX);
-      ui_update_sg_val();
-      ui_update_profile_screen();
+      webSgDelta    = 0;
+      webSgAbsolute = req->getParam("value")->value().toInt();
+      webSgProfile  = tgt;           // publish last
     } else if (req->hasParam("delta")) {
-      // Relative delta (from touch UI)
-      int32_t d = req->getParam("delta")->value().toInt();
-      int32_t v = (int32_t)profiles[tgt].sg_trip + d;
-      profiles[tgt].sg_trip = (uint16_t)constrain(v, (int32_t)RUN_SG_TRIP_MIN, (int32_t)RUN_SG_TRIP_MAX);
-      ui_update_sg_val();
-      ui_update_profile_screen();
+      // Relative delta
+      webSgAbsolute = -1;
+      webSgDelta    = req->getParam("delta")->value().toInt();
+      webSgProfile  = tgt;           // publish last
     }
     req->send(200, "text/plain", "ok");
   });
 
   webServer.on("/api/work_zone", HTTP_POST, [](AsyncWebServerRequest *req) {
+    // Deferred to loop(): read by handleMotion() every pass.
     if (req->hasParam("delta")) {
       int32_t d = req->getParam("delta")->value().toInt();
-      int32_t v = SG_WORK_ZONE_STEPS + d;
-      SG_WORK_ZONE_STEPS = constrain(v, SG_WORK_ZONE_MIN, SG_WORK_ZONE_MAX);
+      webWorkZoneDelta = webWorkZoneDelta + d;
     }
     req->send(200, "text/plain", "ok");
   });
 
   webServer.on("/api/batch", HTTP_POST, [](AsyncWebServerRequest *req) {
+    // All of these are read by handleMotion() — deferred to loop().
     if (req->hasParam("delta")) {
       int32_t d = req->getParam("delta")->value().toInt();
-      int32_t v = batchTarget + d;
-      batchTarget = (v < 0) ? 0 : v;
-      if (batchTarget > 9999) batchTarget = 9999;
-      ui_update_batch_val();
+      webBatchDelta = webBatchDelta + d;
     }
     if (req->hasParam("action")) {
       String a = req->getParam("action")->value();
-      if (a == "start" && batchTarget > 0 && runState == IDLE && endpointsCalibrated) {
-        batchCount = 0;
-        batchActive = true;
-        startRunBetweenEndpoints();
-        setRunButtonState(true);
+      if (a == "start") {
+        // startRunBetweenEndpoints touches stepper, TMC5160 SPI and LVGL.
+        // Validity is re-checked in loop().
+        webBatchStartRequested = true;
       } else if (a == "clear") {
-        batchTarget = 0;
-        batchCount = 0;
-        batchActive = false;
-        ui_update_batch_val();
+        webBatchClearRequested = true;
       }
     }
     req->send(200, "text/plain", "ok");
@@ -654,13 +732,18 @@ static void setupWebServer() {
   webServer.on("/api/action", HTTP_POST, [](AsyncWebServerRequest *req) {
     if (req->hasParam("do")) {
       String action = req->getParam("do")->value();
-      if (action == "calibrate" && runState == IDLE) {
-        webCalRequested = true;
+      // !autoSGActive: runState is briefly IDLE between two Auto SG profiles.
+      if (action == "auto_sg" && runState == IDLE && !autoSGActive) {
+        autoSGRequested = true;
+      } else if (action == "calibrate" && runState == IDLE && !autoSGActive) {
+        calRequested = true;
       } else if (action == "return_home" && runState == STALLED) {
-        webHomeRequested = true;
+        homeRequested = true;
       } else if (action == "reset_counter") {
+        // Plain 32-bit write is safe here; the label is refreshed by
+        // counter_timer_cb (100ms LVGL timer) — no direct LVGL call needed.
         counter = 0;
-        if (counter_label) lv_label_set_text(counter_label, "0");
+        markSettingsDirty();
       }
     }
     req->send(200, "text/plain", "ok");
@@ -668,37 +751,43 @@ static void setupWebServer() {
 
   webServer.on("/api/wifi", HTTP_POST, [](AsyncWebServerRequest *req) {
     if (req->hasParam("ssid")) {
-      String ssid = req->getParam("ssid")->value();
-      String pass = req->hasParam("pass") ? req->getParam("pass")->value() : "";
-      saveWiFiCredentials(ssid, pass);
+      // Deferred to loop() — NVS write (see /save above).
+      pendingWifiSSID = req->getParam("ssid")->value();
+      pendingWifiPass = req->hasParam("pass") ? req->getParam("pass")->value() : String("");
+      webWifiSaveRequested = true;
       req->send(200, "text/plain", "saved");
-      rebootRequested = true;
-      rebootRequestMs = millis();
     } else {
       req->send(400, "text/plain", "ssid required");
     }
   });
 
   webServer.on("/api/wifi_reset", HTTP_POST, [](AsyncWebServerRequest *req) {
-    clearWiFiCredentials();
+    webWifiClearRequested = true;   // deferred to loop() — NVS write
     req->send(200, "text/plain", "cleared");
-    rebootRequested = true;
-    rebootRequestMs = millis();
   });
 
   webServer.on("/api/log_clear", HTTP_POST, [](AsyncWebServerRequest *req) {
-    logHead = 0;
-    logSerial = 0;
-    logSentSerial = 0;
-    memset(logBuf, 0, sizeof(logBuf));
+    // Deferred to loop(): clearing the ring buffer here races with webLog()
+    webLogClearRequested = true;
     req->send(200, "text/plain", "ok");
   });
 
-  // Captive portal probe endpoints (redirect to root)
-  if (captivePortalRunning) {
-    setupCaptiveProbeEndpoints();
-    webServer.onNotFound([](AsyncWebServerRequest *r) { r->redirect("/"); });
-  }
+  // Captive portal probe endpoints (redirect to root while the AP is up)
+  setupCaptiveProbeEndpoints();
+  webServer.onNotFound([](AsyncWebServerRequest *r) {
+    if (captivePortalRunning) r->redirect("/");
+    else r->send(404, "text/plain", "Not found");
+  });
+
+  webServer.on("/api/wifi_enable", HTTP_POST, [](AsyncWebServerRequest *req) {
+    // Deferred to loop(): startWiFi() blocks, and tearing the socket down
+    // from inside its own request handler would be unwise.
+    if (req->hasParam("on")) {
+      int v = req->getParam("on")->value().toInt();
+      wifiEnableRequested = (v != 0) ? 1 : 0;
+    }
+    req->send(200, "text/plain", "ok");
+  });
 
   // OTA firmware upload
   webServer.on("/api/ota", HTTP_POST,
@@ -706,8 +795,8 @@ static void setupWebServer() {
       bool ok = !Update.hasError();
       if (ok) {
         req->send(200, "text/plain", "OK");
+        rebootRequestMs = millis();   // before the flag: loop() reads both
         rebootRequested = true;
-        rebootRequestMs = millis();
       } else {
         req->send(500, "text/plain", String("Update failed: ") + Update.errorString());
       }
@@ -716,8 +805,11 @@ static void setupWebServer() {
        uint8_t *data, size_t len, bool final) {
       if (index == 0) {
         Serial.printf("OTA: upload '%s'\n", filename.c_str());
-        // Stop motor if running
-        if (runState == RUNNING) requestGracefulStop();
+        // Stop motor if running — deferred to loop() (stepper calls must not
+        // run in the AsyncTCP task). loop() keeps running during the upload,
+        // so the stop executes within milliseconds.
+        if (runState == RUNNING) webStopRequested = true;
+        batchActive = false;
         if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
           Update.printError(Serial);
           return;
@@ -726,11 +818,12 @@ static void setupWebServer() {
       if (Update.isRunning()) {
         if (Update.write(data, len) != len) {
           Update.printError(Serial);
+          Update.abort();   // otherwise every later chunk fails silently too
           return;
         }
       }
       if (final) {
-        if (Update.end(true))
+        if (Update.isRunning() && Update.end(true))
           Serial.printf("OTA: success, %u bytes\n", index + len);
         else
           Update.printError(Serial);
@@ -738,29 +831,204 @@ static void setupWebServer() {
     }
   );
 
-  webServer.begin();
-  Serial.println("Web server started on port 80");
+  // NOTE: no webServer.begin() here. The listening socket is opened by
+  // wifiStartServices() and closed by wifiStopServices(), so the WiFi master
+  // switch can start and stop it without re-registering handlers.
+  Serial.println("Web server handlers registered");
 }
 
-void handleWebCalibration() {
-  if (!webCalRequested) return;
-  webCalRequested = false;
-  if (runState != IDLE) return;
-  calibrateEndpointsSensorless();
+// Calibration is long and blocking. It is ALWAYS run from here (loop()), so
+// the nested lv_timer_handler() calls inside it really do drive the display.
+void handleCalibrationRequest() {
+  if (!calRequested) return;
+  calRequested = false;
+  if (runState != IDLE) { ui_update_cal_button(); return; }
+  bool ok = calibrateEndpointsSensorless();
+  calFailed = !ok;
+  ui_update_cal_button();
   ui_update_main_warning();
   recomputeEffectiveEndpoints();
   ui_update_tuning_numbers();
   ui_update_endpoint_edit_values();
+  setRunButtonState(false);
+  markSettingsDirty();
 }
 
-void handleWebHome() {
-  if (!webHomeRequested) return;
-  webHomeRequested = false;
+// Auto SG is long and blocking, like calibration, and is likewise ALWAYS run
+// from here (loop()) so the lv_timer_handler() calls inside it drive the
+// display and the touch RUN button can abort it.
+void handleAutoSGRequest() {
+  if (!autoSGRequested) return;
+  autoSGRequested = false;
+  if (runState != IDLE) { ui_update_autosg_button(); return; }
+  bool ok = autoCalibrateSG();
+  autoSGFailed = !ok;
+  ui_update_autosg_button();
+  setRunButtonState(false);
+}
+
+void handleHomeRequest() {
+  if (!homeRequested) return;
+  homeRequested = false;
   if (runState != STALLED) return;
   safeCreepHome();
 }
 
+// ==========================================================================
+//  DEFERRED WEB REQUEST PROCESSING — called from loop()
+//  Async web handlers run in the AsyncTCP task. Anything touching the
+//  TMC5160 (shared SPI bus with the display), the stepper, LVGL (not
+//  thread-safe), or the log ring buffer is processed here instead.
+// ==========================================================================
+void handleWebRequests() {
+  handleCalibrationRequest();
+  handleHomeRequest();
+  handleAutoSGRequest();
+
+  if (wifiEnableRequested >= 0) {
+    bool en = (wifiEnableRequested == 1);
+    wifiEnableRequested = -1;
+    setWifiEnabled(en);
+  }
+
+  if (webToggleRunRequested) {
+    webToggleRunRequested = false;
+    if (runState == IDLE) {
+      startRunBetweenEndpoints();
+      setRunButtonState(runState == RUNNING);
+    } else if (runState == RUNNING) {
+      requestGracefulStop();     // also clears batchActive
+      setRunButtonState(false);
+    }
+  }
+
+  if (webStopRequested) {
+    webStopRequested = false;
+    if (runState == RUNNING) {
+      requestGracefulStop();     // also clears batchActive
+      setRunButtonState(false);
+    }
+  }
+
+  if (webBatchStartRequested) {
+    webBatchStartRequested = false;
+    if (batchTarget > 0 && runState == IDLE && endpointsCalibrated && sgCalibrated) {
+      batchCount = 0;
+      batchActive = true;
+      startRunBetweenEndpoints();
+      setRunButtonState(true);
+    }
+  }
+
+  if (webBatchClearRequested) {
+    webBatchClearRequested = false;
+    batchTarget = 0;
+    batchCount  = 0;
+    batchActive = false;
+    markSettingsDirty();
+    ui_update_batch_val();
+    ui_update_batch_remain();
+  }
+
+  if (webBatchDelta != 0) {
+    int32_t d = webBatchDelta;
+    webBatchDelta = 0;
+    batchTarget = clamp_i32(batchTarget + d, 0, 9999);
+    markSettingsDirty();
+    ui_update_batch_val();
+  }
+
+  if (webProfileRequested >= 0) {
+    int8_t p = webProfileRequested;
+    webProfileRequested = -1;
+    if (p < (int8_t)NUM_PROFILES && runState != CALIBRATING && runState != HOMING)
+      setActiveProfile((uint8_t)p);   // queues it if we're running
+  }
+
+  // A switch queued during a run that ended before the next direction change
+  // (batch finished, STOP pressed, jam) would otherwise sit here forever.
+  if (pendingProfile >= 0 && runState == IDLE) applyPendingProfile();
+
+  if (webCurrentMaRequested >= 0) {
+    int32_t ma = webCurrentMaRequested;
+    webCurrentMaRequested = -1;
+    RUN_CURRENT_MA = (uint16_t)constrain(ma, (int32_t)RUN_CURRENT_MIN, (int32_t)RUN_CURRENT_MAX);
+    if (runState != CALIBRATING && runState != HOMING) driver.rms_current(RUN_CURRENT_MA);
+    markSettingsDirty();
+    webLog("Current set to %u mA", RUN_CURRENT_MA);
+    if (sgCalibrated && sgCalCurrentMa > 0 && RUN_CURRENT_MA != sgCalCurrentMa)
+      webLog("NOTE: SG trips were measured at %u mA — re-run Auto SG at the new current",
+             sgCalCurrentMa);
+  }
+
+  if (webUpOffsetDelta != 0 || webDownOffsetDelta != 0) {
+    int32_t du = webUpOffsetDelta, dd = webDownOffsetDelta;
+    webUpOffsetDelta = 0; webDownOffsetDelta = 0;
+    if (endpointsCalibrated) {
+      upOffsetSteps   = clamp_i32(upOffsetSteps + du, OFFSET_MIN, OFFSET_MAX);
+      downOffsetSteps = clamp_i32(downOffsetSteps + dd, OFFSET_MIN, OFFSET_MAX);
+      recomputeEffectiveEndpoints();
+      markSettingsDirty();
+      ui_update_endpoint_edit_values();
+      ui_update_tuning_numbers();
+    }
+  }
+
+  if (webWorkZoneDelta != 0) {
+    int32_t d = webWorkZoneDelta;
+    webWorkZoneDelta = 0;
+    SG_WORK_ZONE_STEPS = clamp_i32(SG_WORK_ZONE_STEPS + d, SG_WORK_ZONE_MIN, SG_WORK_ZONE_MAX);
+    markSettingsDirty();
+    webLog("Work zone set to %ld steps", (long)SG_WORK_ZONE_STEPS);
+    if (sgCalibrated)
+      webLog("NOTE: the work zone decides which part of the stroke Auto SG measured — re-run it");
+  }
+
+  if (webSgProfile >= 0) {
+    int8_t   p     = webSgProfile;
+    int32_t  absV  = webSgAbsolute;
+    int32_t  delta = webSgDelta;
+    webSgProfile = -1; webSgAbsolute = -1; webSgDelta = 0;
+    if (p < (int8_t)NUM_PROFILES) {
+      int32_t v = (absV >= 0) ? absV : ((int32_t)profiles[p].sg_trip + delta);
+      profiles[p].sg_trip = (uint16_t)constrain(v, (int32_t)RUN_SG_TRIP_MIN, (int32_t)RUN_SG_TRIP_MAX);
+      // Set up only while EVERY profile has a trip; re-locks on a 0.
+      sgCalibrated = allSgTripsSet();
+      markSettingsDirty();
+      ui_update_main_warning();
+      ui_update_sg_val();
+      ui_update_profile_screen();
+      webLog("SG trip [%s] = %u", profiles[p].name, profiles[p].sg_trip);
+    }
+  }
+
+  if (webWifiSaveRequested) {
+    webWifiSaveRequested = false;
+    saveWiFiCredentials(pendingWifiSSID, pendingWifiPass);
+    webLog("WiFi credentials saved, rebooting...");
+    rebootRequestMs = millis();   // before the flag: loop() reads both
+    rebootRequested = true;
+  }
+
+  if (webWifiClearRequested) {
+    webWifiClearRequested = false;
+    clearWiFiCredentials();
+    webLog("WiFi credentials cleared, rebooting...");
+    rebootRequestMs = millis();   // before the flag: loop() reads both
+    rebootRequested = true;
+  }
+
+  if (webLogClearRequested) {
+    webLogClearRequested = false;
+    logHead = 0;
+    logSerial = 0;
+    logSentSerial = 0;
+    memset(logBuf, 0, sizeof(logBuf));
+  }
+}
+
 void broadcastState() {
+  if (!wifiEnabled) return;
   uint32_t now = millis();
   if ((now - lastSSEMs) < SSE_INTERVAL_MS) return;
   lastSSEMs = now;
@@ -770,16 +1038,11 @@ void broadcastState() {
   // Send only NEW log lines since last broadcast
   if (logSerial > logSentSerial) {
     uint32_t pending = logSerial - logSentSerial;
-    // Can't send more than what's in the ring buffer
-    if (pending > LOG_LINES) {
-      logSentSerial = logSerial - LOG_LINES;
-      pending = LOG_LINES;
-    }
-    // Cap per broadcast to avoid huge payloads
-    if (pending > 20) {
-      logSentSerial = logSerial - 20;
-      pending = 20;
-    }
+    // Can't send more than what's in the ring buffer, and cap the payload
+    // per broadcast. Anything older is dropped (logSentSerial jumps to
+    // logSerial below), which is why there is no bookkeeping to do here.
+    if (pending > LOG_LINES) pending = LOG_LINES;
+    if (pending > 20)        pending = 20;
     String logJson = "{\"log\":[";
     uint16_t startIdx = (logHead + LOG_LINES - (uint16_t)pending) % LOG_LINES;
     for (uint16_t i = 0; i < (uint16_t)pending; i++) {

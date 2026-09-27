@@ -49,7 +49,12 @@
 #define LV_MEM_CUSTOM 0
 #if LV_MEM_CUSTOM == 0
     /*Size of the memory available for `lv_mem_alloc()` in bytes (>= 2kB)*/
-    #define LV_MEM_SIZE (48U * 1024U)          /*[bytes]*/
+    /* AutoLee: raised from 48K. The UI is ~230 LVGL objects across 12
+     * screens and 48K was already marginal — v1.13's SG Tuning screen
+     * exhausted it, and LV_ASSERT_MALLOC halted in an infinite loop before
+     * the display or WiFi ever came up. Paid for by dropping LOG_LINES from
+     * 500 to 300 in config.h (-28K). Boot prints the actual usage. */
+    #define LV_MEM_SIZE (80U * 1024U)          /*[bytes]*/
 
     /*Set an address for the memory pool instead of allocating it as a normal array. Can be in external SRAM too.*/
     #define LV_MEM_ADR 0     /*0: unused*/
@@ -230,7 +235,11 @@
  *-----------*/
 
 /*Enable the log module*/
-#define LV_USE_LOG 0
+/* AutoLee: kept ON. With logging off, an allocation failure hits
+ * LV_ASSERT_HANDLER (while(1);) completely silently — the device just stops
+ * with a black screen and no serial output. At WARN level this is quiet in
+ * normal operation but names the problem if it ever happens again. */
+#define LV_USE_LOG 1
 #if LV_USE_LOG
 
     /*How important log should be added:
@@ -244,7 +253,7 @@
 
     /*1: Print the log with 'printf';
     *0: User need to register a callback with `lv_log_register_print_cb()`*/
-    #define LV_LOG_PRINTF 0
+    #define LV_LOG_PRINTF 1   /*AutoLee: route LVGL messages to Serial*/
 
     /*Enable/disable LV_LOG_TRACE in modules that produces a huge number of logs*/
     #define LV_LOG_TRACE_MEM        1
