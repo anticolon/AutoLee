@@ -43,7 +43,8 @@ The stall detection and jam protection features are designed to detect brass get
 - **Never work on the PSU while it is plugged in.** Unplug it and wait before touching anything — open-frame supplies can hold a dangerous charge in their capacitors after being disconnected.
 - **Always connect protective earth** to the PSU's earth (⏚) terminal.
 - **Never power the PSU unless it is fully closed inside its printed casing.** Never run it open on the bench.
-- Use strain relief on the mains cable. Crimp ferrules on clamp terminals and insulated fork or ring terminals on screw terminals — no bare, tinned or loose strands.
+- Use strain relief on the mains cable. Crimp ferrules on clamp terminals, insulated fork or ring terminals on screw terminals, and fully insulated female spade connectors on the C14 inlet tabs — no bare, tinned or loose strands.
+- **Set the PSU's input voltage selector to match your mains before first power-on** — 230 V in Europe, 110 V in the US. Set to 110 V and plugged into 230 V, the PSU will be destroyed.
 - Double-check every connection before plugging in for the first time.
 
 **LIABILITY DISCLAIMER:** This project is provided as-is with absolutely no warranty of any kind. The author(s) accept no responsibility or liability for any injury, death, damage, or loss resulting from building, modifying, wiring (including mains wiring), or operating this machine. You build and use it entirely at your own risk.
@@ -194,17 +195,17 @@ The Arduino IDE compiles everything as a single translation unit. Include order 
 | 10 | Silicone Wire | 24 AWG, flexible stranded, signal wiring | [Amazon.com](https://www.amazon.com/TUOFENG-Wire-Stranded-Flexible-Silicone-Different/dp/B07G2BWBX8?tag=kldesign00-20) |
 | 11 | Dupont Connector Kit + Crimping Tool | 2.54 mm connectors, housings, and ratcheting crimper | [Amazon.com](https://www.amazon.com/Crimping-Connector-Assortment-Ratcheting-0-25-1-5mm%C2%B2/dp/B0FJ8LCZ9W?tag=kldesign00-20) |
 | 12 | Ferrule Connector Kit + Crimping Tool | For power and motor wires to the TMC5160 clamp terminals | [Amazon.com](https://www.amazon.com/Preciva-Hexagonal-Self-adjustable-Terminals-Connectors/dp/B0D3D65VZT?tag=kldesign00-20) |
-| 12b | Insulated Fork Terminals (36 V version) | For the PSU screw terminals — size to the terminal screw; flanged/locking type recommended | [Amazon.se]([AMAZON_SE_FORK_TERMINALS]) · [Amazon.com]([AMAZON_COM_FORK_TERMINALS]) |
+| 12b | Insulated Fork Terminals + Female Spade Connectors (36 V version) | Forks for the PSU screw terminals (size to the terminal screw; flanged/locking type recommended). Fully insulated female spades for the C14 inlet tabs (size to the tabs, typically 4.8 or 6.3 mm) | [Amazon.se](https://www.amazon.se/dp/B0H7WBF4PW?tag=kldesign-21) · [Amazon.com](https://www.amazon.com/dp/B0DMRWTW7J?tag=kldesign00-20) |
 
 ### 36 V Version — Additional Parts (recommended)
 
 | # | Component | Specs | Link |
 |---|-----------|-------|------|
-| 13 | Power Supply | 36 V, 10 A, open frame (enclosed in printed PSU casing) | [Amazon.se](https://www.amazon.se/dp/B0BX2HH4LX?tag=kldesign-21) · [Amazon.com](https://www.amazon.com/dp/B08LDC41B6?tag=kldesign00-20) |
+| 13 | Power Supply | 36 V, 10 A, open frame (enclosed in printed PSU casing). **Set the input voltage selector to your mains voltage before powering up** | [Amazon.se](https://www.amazon.se/dp/B0BX2HH4LX?tag=kldesign-21) · [Amazon.com](https://www.amazon.com/dp/B0DQ87D9PT?tag=kldesign00-20) |
 | 14 | IEC C14 Panel Inlet | Mains inlet for the PSU casing | [Amazon.se](https://www.amazon.se/dp/B0D4MB1321?tag=kldesign-21) · [Amazon.com](https://www.amazon.com/Panel-Adapter-Connector-Socket-MXR/dp/B07DCXKNXQ?tag=kldesign00-20) |
-| 15 | Mains Power Cable | 230 V, 3-core earthed, IEC C13 plug | [Amazon.se](https://www.amazon.se/dp/B06WWBPCN8?tag=kldesign-21) · [Amazon.com]([AMAZON_COM_C13_CABLE]) |
+| 15 | Mains Power Cable | 3-core earthed, IEC C13 plug, wall plug for your country | [Amazon.se](https://www.amazon.se/dp/B06WWBPCN8?tag=kldesign-21) · [Amazon.com](https://www.amazon.com/dp/B072LPBVP7?tag=kldesign00-20) |
 | 16 | XT60 Connectors | Panel-mount male on AutoLee, female on the PSU lead | [Amazon.se]([AMAZON_SE_XT60]) · [Amazon.com]([AMAZON_COM_XT60]) |
-| 17 | Step-down 36 V → 24 V | Adjustable buck converter — **must be set to 24 V before connecting loads** | [Amazon.se](https://www.amazon.se/dp/B0DK6M63YL?tag=kldesign-21) · [Amazon.com]([AMAZON_COM_36V_24V_BUCK]) |
+| 17 | Step-down 36 V → 24 V | Adjustable buck converter — **must be set to 24 V before connecting loads** | [Amazon.se](https://www.amazon.se/dp/B0DK6M63YL?tag=kldesign-21) · [Amazon.com](https://www.amazon.com/dp/B0D7ZWVSFW?tag=kldesign00-20) |
 | 18 | Step-down 24 V → 5 V | Pololu #5267 | [Electrokit](https://www.electrokit.com/en/switchregulator-step-down-5-72v-in-/-5v-ut) · [DigiKey](https://www.digikey.com/en/products/detail/pololu/5267/28723067) |
 | 19 | Mains-rated wire | C14 inlet → PSU L/N/⏚ inside the casing. Flexible single-core, 0.75–1.0 mm² (18 AWG), rated ≥300 V (EU: H05V-K / H07V-K; US: UL1015 600 V). Brown (L), blue (N), green/yellow (⏚) | [Amazon.se]([AMAZON_SE_MAINS_WIRE]) · [Amazon.com]([AMAZON_COM_MAINS_WIRE]) |
 
@@ -393,7 +394,7 @@ After first flash, firmware can be updated two ways:
 
 ## First-Time Setup
 
-1. **(36 V version)** Set the 36 V → 24 V step-down to 24.0 V **before** connecting its loads — see [Power — 36 V Version](#power--36-v-version-recommended).
+1. **(36 V version)** Set the PSU's input voltage selector to your mains voltage (230 V Europe / 110 V US), and set the 36 V → 24 V step-down to 24.0 V **before** connecting its loads — see [Power — 36 V Version](#power--36-v-version-recommended).
 2. **Power on.** The main screen shows **NOT CALIBRATED**.
 3. **Enable WiFi (optional).** WiFi is off on a new install. Go to Settings → Config → WiFi Info → **WiFi On** — the device reboots and starts the `AutoLee-Setup` captive portal if no network is saved. Connect to it and choose your network.
 4. **Calibrate.** Settings → **Calibrate**. The press finds its UP and DOWN stops. This has to be done after **every** power-up.
