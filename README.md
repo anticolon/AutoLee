@@ -154,7 +154,7 @@ The Arduino IDE compiles everything as a single translation unit. Include order 
 
 ## Bill of Materials
 
-> **Support this project:** The product links below are affiliate links. If you purchase through them, I earn a small commission at no extra cost to you — it's a simple way to help fund continued development of AutoLee. Thank you!
+> **Support this project:** The Amazon links below are affiliate links. If you purchase through them, I earn a small commission at no extra cost to you — it's a simple way to help fund continued development of AutoLee. Thank you!
 
 ### Common Parts (both versions)
 
@@ -205,8 +205,8 @@ The Arduino IDE compiles everything as a single translation unit. Include order 
 | 15 | Mains Power Cable | 230 V, 3-core earthed, IEC C13 plug | [Amazon.se](https://www.amazon.se/dp/B06WWBPCN8?tag=kldesign-21) · [Amazon.com]([AMAZON_COM_C13_CABLE]) |
 | 16 | XT60 Connectors | Panel-mount male on AutoLee, female on the PSU lead | [Amazon.se]([AMAZON_SE_XT60]) · [Amazon.com]([AMAZON_COM_XT60]) |
 | 17 | Step-down 36 V → 24 V | Adjustable buck converter — **must be set to 24 V before connecting loads** | [Amazon.se](https://www.amazon.se/dp/B0DK6M63YL?tag=kldesign-21) · [Amazon.com]([AMAZON_COM_36V_24V_BUCK]) |
-| 18 | Step-down 24 V → 5 V | Pololu #5267 | [Electrokit](https://www.electrokit.com/en/switchregulator-step-down-5-72v-in-/-5v-ut) · [International]([POLOLU_5267_INTERNATIONAL]) |
-| 19 | Mains-rated wire | Inlet → PSU terminals, [SPEC] | [LINK_MAINS_WIRE] |
+| 18 | Step-down 24 V → 5 V | Pololu #5267 | [Electrokit](https://www.electrokit.com/en/switchregulator-step-down-5-72v-in-/-5v-ut) · [DigiKey](https://www.digikey.com/en/products/detail/pololu/5267/28723067) |
+| 19 | Mains-rated wire | C14 inlet → PSU L/N/⏚ inside the casing. Flexible single-core, 0.75–1.0 mm² (18 AWG), rated ≥300 V (EU: H05V-K / H07V-K; US: UL1015 600 V). Brown (L), blue (N), green/yellow (⏚) | [Amazon.se]([AMAZON_SE_MAINS_WIRE]) · [Amazon.com]([AMAZON_COM_MAINS_WIRE]) |
 
 > **C13 vs C14:** the panel-mount socket on the PSU casing is an **IEC C14 inlet**. The power cable that plugs into it has a **C13** plug (a standard "computer/kettle" style cable).
 >
