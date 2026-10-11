@@ -362,11 +362,11 @@ If you don't want to set up the Arduino IDE and compile the firmware yourself, y
 
 - A **Chrome** or **Edge** browser (Web Serial is not supported in Firefox or Safari)
 - A **USB-C cable** connected to the Waveshare ESP32-C6 board
-- The merged firmware `.bin` file from the [`/Firmware`](Firmware/) folder in this repo
+- The merged firmware `.bin` file from the [latest release](https://github.com/anticolon/AutoLee/releases/latest)
 
 ### Steps
 
-1. Download the latest `AutoLee.vX.XX_merged.bin` from the [`/Firmware`](Firmware/) folder
+1. Download `AutoLee.vX.XX_merged.bin` from the **Assets** section of the [latest release](https://github.com/anticolon/AutoLee/releases/latest)
 2. Open the [**Espressif Web Flasher**](https://espressif.github.io/esptool-js/) in Chrome or Edge
 3. Click **Connect** and select the port for your ESP32-C6
 4. In the **Program** section, enter **`0x0`** in the Flash Address field
@@ -381,7 +381,7 @@ If you don't want to set up the Arduino IDE and compile the firmware yourself, y
 
 ### Updating Firmware Later
 
-Once AutoLee is on your WiFi, go to the web UI → **Firmware** page and drag-and-drop the **update** file, `AutoLee.vX.XX_update.bin` (not the merged binary). The merged binary is only needed for the initial USB flash.
+Once AutoLee is on your WiFi, go to the web UI → **Firmware** page and drag-and-drop the **update** file, `AutoLee.vX.XX_update.bin` from the [latest release](https://github.com/anticolon/AutoLee/releases/latest) (not the merged binary). Check the release notes first: some updates require re-running Auto SG. The merged binary is only needed for the initial USB flash.
 
 ### OTA Updates
 
